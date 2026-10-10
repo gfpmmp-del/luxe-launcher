@@ -1,5 +1,5 @@
-{"version":"1.1.0",
- "url":"https://github.com/gfpmmp-del/luxe-launcher/releases/download/v1.1.0/MinecraftLauncher.exe",
- "size":46080,
- "notes":"Первый релиз с автообновлением",
+{"version":"1.2.0",
+ "url":"https://github.com/gfpmmp-del/luxe-launcher/releases/download/v1.2.0/MinecraftLauncher.exe",
+ "size":73728,
+ "notes":"Обновление 1.2.0: быстрые закачки, исправлен запуск с пробелом в пути",
  "mandatory":false}
