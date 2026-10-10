@@ -1,5 +1,5 @@
-{"version":"1.3.0",
- "url":"https://github.com/gfpmmp-del/luxe-launcher/releases/download/v1.3.0/MinecraftLauncher.exe",
- "size":76288,
- "notes":"Обновление 1.3.0: Синие квадратики у кнопок — углы кнопок не обрезались",
+{"version":"1.3.1",
+ "url":"https://github.com/gfpmmp-del/luxe-launcher/releases/download/v1.3.1/MinecraftLauncher.exe",
+ "size":76800,
+ "notes":"Обновление 1.3.1: повторные попытки скачивания при обрыве",
  "mandatory":false}
