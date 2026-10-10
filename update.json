@@ -1,5 +1,14 @@
-{"version":"1.4.2",
- "url":"https://github.com/gfpmmp-del/luxe-launcher/releases/download/v1.4.2/Luxe.Launcher.exe",
- "size":200704,
- "notes":"Обновление 1.4.2: иконка-лого, имя Luxe Launcher, все файлы в папке Luxe Visuals",
- "mandatory":false}
+{"version":"1.4.3",
+ "url":"https://github.com/gfpmmp-del/luxe-launcher/releases/download/v1.4.3/Luxe.Launcher.exe",
+ "size":201216,
+ "notes":"Обновление 1.4.3: лого переехали в папку Luxe Visuals",
+ "mandatory":false,
+ "modpacks": [
+   {"id": "1.21.4-fabric-modpack", "name": "Luxe Visuals",
+    "mc": "1.21.4", "loader": "fabric",
+    "gameDir": ".minecraft-1214-modpack",
+    "mods": [
+      {"file": "fabric-api-0.119.4-1.21.4.jar",
+       "url": "https://cdn.modrinth.com/data/P7dR8mSH/versions/p96k10UR/fabric-api-0.119.4%2B1.21.4.jar"},
+      {"file": "quantum-client-1.0.0.jar",
+       "url": "https://github.com/gfpmmp-del/luxe-launcher/releases/download/mods-v1/quantum-client-1.0.0.jar"}]}]}
