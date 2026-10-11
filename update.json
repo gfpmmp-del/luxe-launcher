@@ -1,14 +1,22 @@
-{"version":"1.4.3",
- "url":"https://github.com/gfpmmp-del/luxe-launcher/releases/download/v1.4.3/Luxe.Launcher.exe",
- "size":201216,
- "notes":"Обновление 1.4.3: лого переехали в папку Luxe Visuals",
+{"version":"1.4.4",
+ "url":"https://github.com/gfpmmp-del/luxe-launcher/releases/download/v1.4.4/Luxe.Launcher.exe",
+ "size":201728,
+ "notes":"Обновление 1.4.4: вкладка «Кряки» и модпак Wexside Client",
  "mandatory":false,
  "modpacks": [
    {"id": "1.21.4-fabric-modpack", "name": "Luxe Visuals",
-    "mc": "1.21.4", "loader": "fabric",
+    "mc": "1.21.4", "loader": "fabric", "type": "visual",
     "gameDir": ".minecraft-1214-modpack",
     "mods": [
       {"file": "fabric-api-0.119.4-1.21.4.jar",
        "url": "https://cdn.modrinth.com/data/P7dR8mSH/versions/p96k10UR/fabric-api-0.119.4%2B1.21.4.jar"},
       {"file": "quantum-client-1.0.0.jar",
-       "url": "https://github.com/gfpmmp-del/luxe-launcher/releases/download/mods-v1/quantum-client-1.0.0.jar"}]}]}
+       "url": "https://github.com/gfpmmp-del/luxe-launcher/releases/download/mods-v1/quantum-client-1.0.0.jar"}]},
+   {"id": "1.21.11-fabric-wexside", "name": "Wexside Client",
+    "mc": "1.21.11", "loader": "fabric", "type": "crack",
+    "gameDir": ".minecraft-wexside",
+    "mods": [
+      {"file": "fabric-api-0.141.6-1.21.11.jar",
+       "url": "https://cdn.modrinth.com/data/P7dR8mSH/versions/6qAuTtLR/fabric-api-0.141.6%2B1.21.11.jar"},
+      {"file": "wexside-cracked-1.21.11.jar",
+       "url": "https://github.com/gfpmmp-del/luxe-launcher/releases/download/mods-v1/wexside-cracked-1.21.11.jar"}]}]}
