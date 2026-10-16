@@ -1,7 +1,7 @@
-{"version":"1.4.4",
- "url":"https://github.com/gfpmmp-del/luxe-launcher/releases/download/v1.4.4/Luxe.Launcher.exe",
- "size":201728,
- "notes":"Обновление 1.4.4: вкладка «Кряки» и модпак Wexside Client",
+{"version":"1.7.0",
+ "url":"https://github.com/gfpmmp-del/luxe-launcher/releases/download/v1.7.0/Luxe.Launcher.exe",
+ "size":1915904,
+ "notes":"1.7.0:\n- Вшит шрифт Inter, стоковый Segoe UI убран из всего лаунчера\n- Минималистичный стиль: спокойная палитра и простой баннер\n- Плавная прокрутка колесом в списках версий, новостей и модов\n- Починено автообновление: новый exe больше не терялся в папке данных",
  "mandatory":false,
  "modpacks": [
    {"id": "1.21.4-fabric-modpack", "name": "Luxe Visuals",
