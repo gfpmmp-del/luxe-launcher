@@ -586,7 +586,10 @@ class BoreTunnel
             int port = ParsePort(hello);
             if (port <= 0) { err = "релей: " + hello; Stop(); return false; }
             PublicPort = port;
-            ctrl.ReadTimeout = 0;
+            // 0 здесь НЕ «бесконечно»: .NET бросает ArgumentOutOfRangeException
+            // («Возможное время ожидания - Infinite или положительное»).
+            // Бесконечное ожидание задаётся через -1 (Timeout.Infinite).
+            ctrl.ReadTimeout = -1;
             Running = true;
             controlThread = new Thread(ControlLoop);
             controlThread.IsBackground = true;
