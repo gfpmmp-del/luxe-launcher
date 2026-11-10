@@ -686,17 +686,25 @@ class BoreTunnel
         lock (wl) { live.Remove(ca); live.Remove(cb); }
     }
 
+    // Вместо WaitOne(int) (у некоторых сборок .NET он бросал
+    // ArgumentOutOfRangeException про «время ожидания») подключаемся
+    // через Task.Wait(ms) — он корректно работает с положительным таймаутом.
     static TcpClient Connect(string host, int port, int ms)
     {
         TcpClient c = new TcpClient();
         c.NoDelay = true;
-        IAsyncResult ar = c.BeginConnect(host, port, null, null);
-        if (!ar.AsyncWaitHandle.WaitOne(ms))
+        var task = System.Threading.Tasks.Task.Factory.FromAsync(
+            c.BeginConnect, c.EndConnect, host, port, null);
+        if (!task.Wait(ms))
         {
             try { c.Close(); } catch { }
             throw new IOException("таймаут подключения");
         }
-        c.EndConnect(ar);
+        if (task.IsFaulted)
+        {
+            try { c.Close(); } catch { }
+            throw task.Exception.InnerException;
+        }
         return c;
     }
 

@@ -1,7 +1,7 @@
 {
     "version":  "3.0.0",
     "url":  "https://github.com/gfpmmp-del/luxe-launcher/releases/download/v3.0.0/Luxe.Launcher.exe",
-    "size":  2639872,
+    "size":  2640384,
     "notes":  "3.0.0: friends requests and shared world via bore.pub tunnel",
     "mandatory":  false,
     "modpacks":  [
