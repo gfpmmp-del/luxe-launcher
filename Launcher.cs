@@ -29,7 +29,7 @@ static class Cfg
     public const string ManifestUrl = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
     public const string JavaJreUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse";
     public const string JavaJdkUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse";
-    public const string AppVersion = "2.2.4";
+    public const string AppVersion = "3.0.0";
 #if ARTYOM
     // Подарочный билд для Артёма: собирается ключом /define:ARTYOM
     public const bool GiftBuild = true;
