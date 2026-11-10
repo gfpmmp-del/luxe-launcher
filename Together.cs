@@ -595,6 +595,18 @@ class BoreTunnel
         }
         catch (Exception ex)
         {
+            // Полный текст ошибки пишем в лог — иначе Short() режет
+            // имя параметра и стектрейс, по которым видно, откуда бросок.
+            try
+            {
+                string logDir = string.IsNullOrEmpty(Cfg.DataDir) ? Cfg.BaseDir : Cfg.DataDir;
+                System.IO.Directory.CreateDirectory(logDir);
+                System.IO.File.WriteAllText(
+                    System.IO.Path.Combine(logDir, "tunnel_error.log"),
+                    ex.GetType().FullName + "\\r\\n" + ex.Message + "\\r\\n\\r\\n" + ex.StackTrace,
+                    System.Text.Encoding.UTF8);
+            }
+            catch { }
             err = Short(ex.Message);
             Stop();
             return false;
