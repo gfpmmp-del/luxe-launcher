@@ -1,0 +1,49 @@
+# Build artifacts
+*.exe
+*.dll
+*.pdb
+*.msi
+*.zip
+*.7z
+
+# Images & screenshots (not source)
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.gif
+*.ico
+
+# Logs & debug
+*.log
+*.txt
+shot_args.txt
+shot_cmd_out.txt
+controls.txt
+build_output.txt
+check_ok.txt
+
+# Backups
+_backup_*/
+_backup*/
+
+# Build output dirs
+dist-linux/
+release/
+crops/
+shots/
+
+# Temp
+*.tmp
+~$*
+
+# Keep assets and fonts (re-include)
+!assets/
+!fonts/
+!assets/**
+!fonts/**
+
+# Keep update metadata
+!update.json
+!update_*.json
+!README.md
