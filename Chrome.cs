@@ -50,6 +50,9 @@ partial class LauncherForm
     const int WS_MINIMIZEBOX = 0x00020000;
     const int WS_MAXIMIZEBOX = 0x00010000;
 
+    [System.Runtime.InteropServices.DllImport("winmm.dll", EntryPoint = "timeBeginPeriod")]
+    static extern uint TimeBeginPeriod(uint uPeriod);
+
     const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
     const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
     const int DWMWA_BORDER_COLOR = 34;
@@ -141,6 +144,8 @@ partial class LauncherForm
     {
         try
         {
+            // Повышаем разрешение таймера Windows до 1 мс для 144Hz анимаций
+            if (Os.IsWin) TimeBeginPeriod(1);
             // Linux/Mono: свою рамку не рисуем — окно тянет и разворачивает
             // оконный менеджер. Иначе безрамочное окно нельзя бы перетащить.
             if (!Os.IsWin)

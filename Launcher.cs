@@ -29,7 +29,7 @@ static class Cfg
     public const string ManifestUrl = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
     public const string JavaJreUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse";
     public const string JavaJdkUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse";
-    public const string AppVersion = "3.0.5";
+    public const string AppVersion = "3.0.6";
 #if ARTYOM
     // Подарочный билд для Артёма: собирается ключом /define:ARTYOM
     public const bool GiftBuild = true;
@@ -2243,7 +2243,8 @@ static class Anim
         if (t == null)
         {
             t = new System.Windows.Forms.Timer();
-            t.Interval = 16;
+            // 7 мс ≈ 144 Hz для плавной прокрутки
+            t.Interval = 7;
             t.Tick += delegate
             {
                 if (subs.Count == 0) { t.Stop(); return; }
