@@ -35,7 +35,8 @@ class SignalMsg
     public string From = "";
     public string To = "";
     public string Addr = "";
-    public string Rid = "";       // на какую заявку ответ
+    public string Rid = "";
+    public string Ver = "";       // версия Minecraft хоста (для автоподключения)       // на какую заявку ответ
     public double Time = 0;
 }
 
@@ -51,6 +52,7 @@ class SocialInvite
 {
     public string Name = "";
     public string Addr = "";
+    public string Ver = "";
     public double Time = 0;
 }
 
@@ -105,6 +107,12 @@ static class LuxeSignal
     public static bool Publish(string from, string to, string kind, string addr,
         string rid, string id, out string err)
     {
+        return Publish(from, to, kind, addr, rid, id, "", out err);
+    }
+
+    public static bool Publish(string from, string to, string kind, string addr,
+        string rid, string id, string ver, out string err)
+    {
         err = "";
         if (string.IsNullOrEmpty(from) || string.IsNullOrEmpty(to)) { err = "пустой адресат"; return false; }
         if (string.IsNullOrEmpty(id)) id = Guid.NewGuid().ToString("N");
@@ -116,6 +124,7 @@ static class LuxeSignal
         d["t"] = (long)LauncherForm.NowUnix();
         if (!string.IsNullOrEmpty(addr)) d["addr"] = addr;
         if (!string.IsNullOrEmpty(rid)) d["rid"] = rid;
+        if (!string.IsNullOrEmpty(ver)) d["ver"] = ver;
         string body = Auth.Json.Serialize(d);
         try
         {
@@ -177,6 +186,7 @@ static class LuxeSignal
             m.To = T(d, "to");
             m.Addr = T(d, "addr");
             m.Rid = T(d, "rid");
+            m.Ver = T(d, "ver");
             try { m.Time = Convert.ToDouble(env["time"]); } catch { }
             if (m.Kind.Length == 0 || m.From.Length == 0) continue;
             if (m.To.Length > 0 && me.Length > 0 &&
@@ -284,6 +294,7 @@ static class SocialStore
             SocialInvite i = new SocialInvite();
             i.Name = S(d, "name");
             i.Addr = S(d, "addr");
+            i.Ver = S(d, "ver");
             try { i.Time = Convert.ToDouble(d["t"]); } catch { }
             if (i.Name.Length > 0 && i.Addr.Length > 0) list.Add(i);
         }
@@ -337,6 +348,7 @@ static class SocialStore
             Dictionary<string, object> d = new Dictionary<string, object>();
             d["name"] = list[i].Name;
             d["addr"] = list[i].Addr;
+            if (list[i].Ver.Length > 0) d["ver"] = list[i].Ver;
             d["t"] = list[i].Time;
             a[i] = d;
         }
@@ -475,6 +487,11 @@ static class SocialStore
 
     public static void SetInvite(string name, string addr)
     {
+        SetInvite(name, addr, "");
+    }
+
+    public static void SetInvite(string name, string addr, string ver)
+    {
         lock (Sync)
         {
             Load();
@@ -483,6 +500,7 @@ static class SocialStore
             SocialInvite n = new SocialInvite();
             n.Name = name;
             n.Addr = addr;
+            n.Ver = ver == null ? "" : ver;
             n.Time = LauncherForm.NowUnix();
             invites.Add(n);
             SaveLocked();
@@ -501,6 +519,17 @@ static class SocialStore
             Load();
             foreach (SocialInvite i in invites)
                 if (Eq(i.Name, name)) return i.Addr;
+            return "";
+        }
+    }
+
+    public static string InviteVerFor(string name)
+    {
+        lock (Sync)
+        {
+            Load();
+            foreach (SocialInvite i in invites)
+                if (Eq(i.Name, name)) return i.Ver;
             return "";
         }
     }
@@ -1463,6 +1492,14 @@ partial class LauncherForm
         copy.Click += delegate { CopyText(LuxeTunnel.PublicAddress, "Адрес скопирован"); };
         p.Controls.Add(copy);
 
+        RoundedButton inviteAll = RoundedButton.Dark("Пригласить всех", 10);
+        inviteAll.Font = Ui.Font(9, FontStyle.Bold);
+        inviteAll.Enabled = on;
+        inviteAll.Location = new Point(418, 134);
+        inviteAll.Size = new Size(176, 36);
+        inviteAll.Click += delegate { AutoInviteFriends(); };
+        p.Controls.Add(inviteAll);
+
         p.Resize += delegate
         {
             try
@@ -1510,7 +1547,8 @@ partial class LauncherForm
         p.Controls.Add(nm);
 
         Label st = new Label();
-        st.Text = "приглашает в мир • " + Ago(inv.Time);
+        string verSuffix = (inv.Ver != null && inv.Ver.Length > 0) ? " • " + inv.Ver : "";
+        st.Text = "приглашает в мир • " + Ago(inv.Time) + verSuffix;
         st.Font = Ui.Font(8.5f);
         st.ForeColor = Ui.Gray;
         st.BackColor = Color.Transparent;
@@ -1568,6 +1606,26 @@ partial class LauncherForm
         return p;
     }
 
+    // Пытаемся выбрать нужную версию автоматически (без ошибки, если её нет)
+    void SelectVersionIfAvailable(string v)
+    {
+        if (string.IsNullOrEmpty(v)) return;
+        try
+        {
+            // ищем в выпадающем списке
+            for (int i = 0; i < cmbVer.Items.Count; i++)
+            {
+                string item = cmbVer.Items[i] == null ? "" : cmbVer.Items[i].ToString();
+                if (item.StartsWith(v, StringComparison.OrdinalIgnoreCase))
+                {
+                    cmbVer.SelectedIndex = i;
+                    return;
+                }
+            }
+        }
+        catch { }
+    }
+
     void TogetherJoinInvite(SocialInvite i)
     {
         if (friendBox != null)
@@ -1575,7 +1633,23 @@ partial class LauncherForm
             friendBox.Text = i.Addr;
             friendBox.ForeColor = Ui.Txt;
         }
-        TogetherConnect();
+        // Автоподбор версии хоста, чтобы гостю не выбирать вручную
+        if (i.Ver != null && i.Ver.Length > 0)
+        {
+            SelectVersionIfAvailable(i.Ver);
+        }
+        // Если версия установлена — запускаем сразу, без лишнего клика
+        string v = curVer();
+        if (!string.IsNullOrEmpty(v) && Mc.IsInstalled(v))
+        {
+            TogetherConnect();
+        }
+        else
+        {
+            // Версия не установлена — просим выбрать/установить
+            SetStatus("Установи версию " + (i.Ver ?? "") + " и нажми «Подключиться»", false);
+            FriendsSelectTab(2);
+        }
     }
 
     void TogetherConnect()
@@ -1637,6 +1711,9 @@ partial class LauncherForm
                 }
                 WireTunnelClosed();
                 SetStatus("Туннель работает: " + LuxeTunnel.PublicAddress, true);
+                // Автоматизация: приглашаем всех друзей, чтобы им не
+                // нужно было ждать ручного «Позвать в свой мир»
+                AutoInviteFriends();
                 FriendsRender();
             });
         });
@@ -1691,6 +1768,12 @@ partial class LauncherForm
         }
         if (view == ViewFriends && friendsTab == 2) FriendsRender();
         FriendsNote();
+        // Автоматизация: если мир открыт и туннель ещё не поднят —
+        // поднимаем его сами, чтобы хозяину не нажимать лишнюю кнопку
+        if (p > 0 && !LuxeTunnel.Active && !tunnelBusy && view == ViewFriends && friendsTab == 2)
+        {
+            TogetherTunnelToggle();
+        }
     }
 
     // приглашение другу: «…» → «Позвать в свой мир»
@@ -1703,9 +1786,35 @@ partial class LauncherForm
             FriendsSelectTab(2);
             return;
         }
-        SendSignal(name, "join", addr, "");
+        SendSignal(name, "join", addr, "", curVer());
         SetStatus("Приглашение в мир отправлено: " + name, true);
         FriendState("Приглашение отправлено: " + name, true);
+    }
+
+    // Автоматически приглашаем всех друзей, когда туннель поднят
+    void AutoInviteFriends()
+    {
+        try
+        {
+            string addr = LuxeTunnel.PublicAddress;
+            if (addr.Length == 0) return;
+            List<string> names = new List<string>();
+            if (friendsCache != null)
+            {
+                foreach (LuxeFriend f in friendsCache)
+                    names.Add(f.Name);
+            }
+            if (names.Count == 0) return;
+            int sent = 0;
+            foreach (string n in names)
+            {
+                SendSignal(n, "join", addr, "", curVer());
+                sent++;
+            }
+            SetStatus("Приглашения отправлены: " + sent + " друзей — " + addr, true);
+            FriendState("Приглашения отправлены " + sent + " друзьям", true);
+        }
+        catch { }
     }
 
     // «…» → «Играть вместе»
@@ -1802,6 +1911,11 @@ partial class LauncherForm
 
     void SendSignal(string to, string kind, string addr, string rid)
     {
+        SendSignal(to, kind, addr, rid, "");
+    }
+
+    void SendSignal(string to, string kind, string addr, string rid, string ver)
+    {
         string me = SignalMe();
         if (me.Length == 0) { ShowError("Не определён ник — письмо отправить некому"); return; }
         string id = Guid.NewGuid().ToString("N");
@@ -1809,7 +1923,7 @@ partial class LauncherForm
         {
             string err = "";
             bool ok = false;
-            try { ok = LuxeSignal.Publish(me, to, kind, addr, rid, id, out err); } catch { }
+            try { ok = LuxeSignal.Publish(me, to, kind, addr, rid, id, ver, out err); } catch { }
             if (!ok) SocialPost(delegate { SetStatus("Не отправилось: " + err, false); });
         });
         t.IsBackground = true;
@@ -1852,8 +1966,18 @@ partial class LauncherForm
         else if (m.Kind == "join")
         {
             if (m.Addr.Length == 0) return;
-            SocialStore.SetInvite(from, m.Addr);
+            SocialStore.SetInvite(from, m.Addr, m.Ver);
             SetStatus(from + " приглашает в мир: " + m.Addr, true);
+            // Автоматически переключаемся на вкладку «Вместе» и показываем
+            // приглашение, чтобы гостю не нужно было искать его вручную
+            if (view == ViewFriends)
+            {
+                FriendsSelectTab(2);
+            }
+            else
+            {
+                // Если раздел не открыт — хотя бы мигнём статусом
+            }
         }
         else if (m.Kind == "join_req")
         {

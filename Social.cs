@@ -541,6 +541,15 @@ partial class LauncherForm
             socialTimer.Start();
         }
         catch { }
+        // Пробуждаем сервис Render (он засыпает при простое): фоновый
+        // пинг, чтобы первый запрос друзей не ждал 30-60 секунд
+        Thread wake = new Thread((ThreadStart)delegate
+        {
+            try { Luxe.Init(); } catch { }
+            try { if (!Luxe.Ready) Luxe.Login(null, nick); } catch { }
+        });
+        wake.IsBackground = true;
+        wake.Start();
         StartSignalTimer();
         SocialLogin();
     }
@@ -848,7 +857,12 @@ partial class LauncherForm
     {
         if (DbgSocialDemo) { FriendsRender(); return; }
         if (friendsBusy) { friendsAgain = true; return; }
-        if (!Luxe.Ready) { SocialLogin(); return; }
+        if (!Luxe.Ready)
+        {
+            FriendState("Сервис просыпается, подождите...", true);
+            SocialLogin();
+            return;
+        }
         friendsBusy = true;
         FriendState("Обновляю...", true);
         Thread t = new Thread((ThreadStart)delegate
