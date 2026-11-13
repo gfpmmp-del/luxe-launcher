@@ -65,6 +65,9 @@ partial class LauncherForm
             // на Linux этих стилей нет — окно оформляет оконный менеджер
             if (Os.IsWin)
                 cp.Style |= WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+            // WS_EX_COMPOSITED: двойная буферизация на уровне окна —
+            // убирает мерцание и дёрганье при скролле и перерисовке
+            cp.ExStyle |= 0x02000000;
             return cp;
         }
     }

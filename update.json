@@ -1,8 +1,8 @@
 {
-    "version":  "3.0.3",
-    "url":  "https://github.com/gfpmmp-del/luxe-launcher/releases/download/v3.0.3/Luxe.Launcher.exe",
-    "size":  2640384,
-    "notes":  "3.0.3: tunnel fix (ReadTimeout 0 -\u003e -1).",
+    "version":  "3.0.4",
+    "url":  "https://github.com/gfpmmp-del/luxe-launcher/releases/download/v3.0.4/Luxe.Launcher.exe",
+    "size":  2642944,
+    "notes":  "3.0.4: smoother scrolling, less flicker.",
     "mandatory":  false,
     "modpacks":  [
                      {

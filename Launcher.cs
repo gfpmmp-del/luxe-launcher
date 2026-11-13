@@ -29,7 +29,7 @@ static class Cfg
     public const string ManifestUrl = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
     public const string JavaJreUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse";
     public const string JavaJdkUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse";
-    public const string AppVersion = "3.0.3";
+    public const string AppVersion = "3.0.4";
 #if ARTYOM
     // Подарочный билд для Артёма: собирается ключом /define:ARTYOM
     public const bool GiftBuild = true;
@@ -3597,16 +3597,11 @@ void ApplyScroll()
             // ход колеса мельче системного: прокрутка не «прыгает»
             scrollTarget += -e.Delta / 4.5f;
             if (scrollTarget < 0) scrollTarget = 0;
-            int max = MaxScrollY();
+            float max = MaxScrollY();
             if (scrollTarget > max) scrollTarget = max;
-            if (max > 0)
-            {
-                EnsureAnim();
-                // событие гасим только когда прокрутка реально есть,
-                // иначе колесо не дойдёт до внешнего контейнера
-                HandledMouseEventArgs hm = e as HandledMouseEventArgs;
-                if (hm != null) hm.Handled = true;
-            }
+            EnsureAnim();
+            HandledMouseEventArgs hm = e as HandledMouseEventArgs;
+            if (hm != null) hm.Handled = true;
         }
         catch { }
     }
@@ -4024,12 +4019,14 @@ class DarkFlowPanel : FlowLayoutPanel
             if (InvokeRequired) { base.OnMouseWheel(e); return; }
             // пользователь взял управление — защёлку верха снимаем
             lockTop = false;
-            // шаг колеса сделан мельче, чтобы скролл не дёргался
-            scrollTarget += -e.Delta / 4.5f;
+            lockTop = false;
+            int max = MaxScrollY();
+            if (max <= 0) return;
+            float step = max > 400 ? 80f : 40f;
+            scrollTarget += -e.Delta > 0 ? -step : step;
             if (scrollTarget < 0) scrollTarget = 0;
-            float max = MaxScrollY();
             if (scrollTarget > max) scrollTarget = max;
-            EnsureAnim();
+            ScrollTo((int)scrollTarget);
             HandledMouseEventArgs hm = e as HandledMouseEventArgs;
             if (hm != null) hm.Handled = true;
         }
