@@ -560,6 +560,7 @@ partial class LauncherForm
         if (socialBusy) return;
         socialBusy = true;
         socialRelogin = false;
+        SetStatus("Подключаюсь к сервису...", true);
         string off = nick;
         string token = null;
         try { if (Auth.LoggedIn) token = Auth.EnsureToken(); }

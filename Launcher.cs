@@ -29,7 +29,7 @@ static class Cfg
     public const string ManifestUrl = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
     public const string JavaJreUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse";
     public const string JavaJdkUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse";
-    public const string AppVersion = "3.0.4";
+    public const string AppVersion = "3.0.5";
 #if ARTYOM
     // Подарочный билд для Артёма: собирается ключом /define:ARTYOM
     public const bool GiftBuild = true;
@@ -3562,11 +3562,11 @@ class ScrollPanel : Panel
                     // РЎС‚РѕРї: С€Р°Рі РЅРёРєРѕРіРґР° РЅРµ Р±РѕР»СЊС€Рµ РѕСЃС‚Р°С‚РєР°, РїРѕСЌС‚РѕРјСѓ С†РµР»СЊ
                     // РґРѕСЃС‚РёРіР°РµС‚СЃСЏ С‚РѕС‡РЅРѕ Рё Р°РЅРёРјР°С†РёСЏ РЅРµ Р±РѕР»С‚Р°РµС‚СЃСЏ РІРѕРєСЂСѓРі РЅРµС‘.
                     if (Math.Abs(d) < 0.35f) { scrollCur = scrollTarget; ApplyScroll(); StopAnim(); return; }
-                    float step = d * 0.32f;
-                    if (step > 28f) step = 28f;
-                    if (step < -28f) step = -28f;
-                    if (step > 0f && step < 0.9f) step = 0.9f;
-                    if (step < 0f && step > -0.9f) step = -0.9f;
+                    float step = d * 0.45f;
+                    if (step > 40f) step = 40f;
+                    if (step < -40f) step = -40f;
+                    if (step > 0f && step < 1.2f) step = 1.2f;
+                    if (step < 0f && step > -1.2f) step = -1.2f;
                     scrollCur += step;
                     ApplyScroll();
                 }
@@ -3812,6 +3812,7 @@ class DarkFlowPanel : FlowLayoutPanel
         BackColor = Ui.Bg;
         // FlowLayoutPanel без буфера заметно мерцает при прокрутке
         SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
+        SetStyle(ControlStyles.Opaque, true);
         DoubleBuffered = true;
     }
 
@@ -4019,14 +4020,12 @@ class DarkFlowPanel : FlowLayoutPanel
             if (InvokeRequired) { base.OnMouseWheel(e); return; }
             // пользователь взял управление — защёлку верха снимаем
             lockTop = false;
-            lockTop = false;
-            int max = MaxScrollY();
-            if (max <= 0) return;
-            float step = max > 400 ? 80f : 40f;
-            scrollTarget += -e.Delta > 0 ? -step : step;
+            // Плавный скролл с ускорением: шаг пропорционален дельте колеса
+            scrollTarget += -e.Delta / 3.0f;
             if (scrollTarget < 0) scrollTarget = 0;
+            float max = MaxScrollY();
             if (scrollTarget > max) scrollTarget = max;
-            ScrollTo((int)scrollTarget);
+            if (max > 0) EnsureAnim();
             HandledMouseEventArgs hm = e as HandledMouseEventArgs;
             if (hm != null) hm.Handled = true;
         }
