@@ -1,8 +1,8 @@
 {
-    "version":  "3.0.6",
-    "url":  "https://github.com/gfpmmp-del/luxe-launcher/releases/download/v3.0.6/Luxe.Launcher.exe",
+    "version":  "3.0.7",
+    "url":  "https://github.com/gfpmmp-del/luxe-launcher/releases/download/v3.0.7/Luxe.Launcher.exe",
     "size":  2642944,
-    "notes":  "3.0.6: 144Hz scroll, timeBeginPeriod, smoother easing.",
+    "notes":  "3.0.7: reverted 144Hz (caused lag), optimized ApplyScroll, loading indicators.",
     "mandatory":  false,
     "modpacks":  [
                      {

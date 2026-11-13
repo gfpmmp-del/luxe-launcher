@@ -144,8 +144,6 @@ partial class LauncherForm
     {
         try
         {
-            // Повышаем разрешение таймера Windows до 1 мс для 144Hz анимаций
-            if (Os.IsWin) TimeBeginPeriod(1);
             // Linux/Mono: свою рамку не рисуем — окно тянет и разворачивает
             // оконный менеджер. Иначе безрамочное окно нельзя бы перетащить.
             if (!Os.IsWin)

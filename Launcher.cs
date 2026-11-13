@@ -29,7 +29,7 @@ static class Cfg
     public const string ManifestUrl = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
     public const string JavaJreUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse";
     public const string JavaJdkUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse";
-    public const string AppVersion = "3.0.6";
+    public const string AppVersion = "3.0.7";
 #if ARTYOM
     // Подарочный билд для Артёма: собирается ключом /define:ARTYOM
     public const bool GiftBuild = true;
@@ -2243,8 +2243,8 @@ static class Anim
         if (t == null)
         {
             t = new System.Windows.Forms.Timer();
-            // 7 мс ≈ 144 Hz для плавной прокрутки
-            t.Interval = 7;
+            // 16 мс ≈ 60 Hz — стабильная частота без перегрузки UI-потока
+            t.Interval = 16;
             t.Tick += delegate
             {
                 if (subs.Count == 0) { t.Stop(); return; }
@@ -3648,6 +3648,7 @@ class DarkFlowPanel : FlowLayoutPanel
 
     // Плавная прокрутка: колесо копило дельту и ехало к цели по кадрам
     float scrollCur, scrollTarget;
+    int lastAppliedY = -1;
     Action tick = null;
     bool animating;
     bool resetPending;
@@ -3823,6 +3824,7 @@ class DarkFlowPanel : FlowLayoutPanel
         {
             StopAnim();
             scrollCur = 0; scrollTarget = 0;
+            lastAppliedY = -1;
             lockTop = true;
             // сброс сразу после добавления элементов не прилипает:
             // AutoScrollPosition применяется уже в следующем проходе
@@ -3907,6 +3909,8 @@ class DarkFlowPanel : FlowLayoutPanel
             int y = (int)Math.Round(scrollCur);
             if (y < 0) y = 0;
             if (y > max) y = max;
+            if (y == lastAppliedY) return;
+            lastAppliedY = y;
             AutoScrollPosition = new Point(0, y);
             HideNative();
             // полосу прокрутки рисуем поверх содержимого — без
