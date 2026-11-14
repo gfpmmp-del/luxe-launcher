@@ -29,7 +29,7 @@ static class Cfg
     public const string ManifestUrl = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
     public const string JavaJreUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse";
     public const string JavaJdkUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse";
-    public const string AppVersion = "3.0.7";
+    public const string AppVersion = "3.1.0";
 #if ARTYOM
     // Подарочный билд для Артёма: собирается ключом /define:ARTYOM
     public const bool GiftBuild = true;
@@ -2259,6 +2259,34 @@ static class Anim
     }
 
     // Плавно довести значение до цели за шаг
+    // --- Прокрутка: пауза фоновых анимаций и точность таймера ---
+    static int scrollDepth;
+
+    public static bool Scrolling { get { return scrollDepth > 0; } }
+
+    public static void ScrollStart()
+    {
+        scrollDepth++;
+    }
+
+    public static void ScrollEnd()
+    {
+        if (scrollDepth > 0) scrollDepth--;
+    }
+
+    static bool boosted;
+
+    // timeBeginPeriod(1) нужен один раз: без него 7-мс таймер тикает ~64 Гц.
+    public static void BoostTimer()
+    {
+        if (boosted) return;
+        boosted = true;
+        try { TimeBeginPeriod(1); } catch { }
+    }
+
+    [System.Runtime.InteropServices.DllImport("winmm.dll", EntryPoint = "timeBeginPeriod")]
+    static extern uint TimeBeginPeriod(uint uPeriod);
+
     public static float Step(float cur, float target, float step)
     {
         if (cur < target) { cur += step; if (cur > target) cur = target; }
@@ -3500,28 +3528,31 @@ class RoundedPanel : Panel
     }
 }
 
-// Панель-контейнер с плавной прокруткой содержимого.
-// Схема: внутри лежит один «лист» (Inner) с детьми на абсолютных
-// координатах; прокрутка — это Inner.Top = -offset. Обычный AutoScroll
-// тут не годится: он резервирует место под системный скроллбар и при
-// скрытом скроллбаре умеет сам «уехать» по горизонтали.
+// Панель с содержимым фиксированной высоты: прокрутка = сдвиг Inner.Top.
+// Двигается один контейнер, а не каждый дочерний контрол, поэтому кадры
+// дешёвые и прокрутка не зависит от количества карточек.
 class ScrollPanel : Panel
 {
-    // лист содержимого; его высоту считаем полной (по самому нижнему ребёнку)
+    // Слой, который двигаем. Высота Inner = полная высота содержимого.
     public Control Inner;
-    // выступ узкой полосы прокрутки: контент шире на эту величину,
-    // чтобы полоса не оказывалась под кнопками
+    // Ширина полосы справа: контент не должен залезать под скроллбар.
     public int BarGutter = 12;
 
     float scrollCur, scrollTarget;
-    Action tick = null;
+    int appliedY = -1;
     bool animating;
+    long lastTick;
+    System.Windows.Forms.Timer animTimer;
+    // Тау экспоненциального сглаживания: ~95% пути за 115 мс.
+    const double TauMs = 38.0;
 
     public ScrollPanel()
     {
         BackColor = Ui.Bg;
-        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
+        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint
+            | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
         DoubleBuffered = true;
+        WheelRouter.Ensure();
     }
 
     int ViewH() { return ClientSize.Height; }
@@ -3533,49 +3564,103 @@ class ScrollPanel : Panel
         return max > 0 ? max : 0;
     }
 
-    // Позиция текущей прокрутки (для раскладки и отрисовки полосы)
+    // Текущая прокрутка (целые пиксели, как на экране).
     public float Offset { get { return scrollCur; } }
+    public int ScrollY { get { return appliedY < 0 ? 0 : appliedY; } }
 
     public void ResetScroll()
     {
         StopAnim();
-        scrollCur = 0; scrollTarget = 0;
+        scrollCur = 0f;
+        scrollTarget = 0f;
         ApplyScroll();
     }
 
-    void StopAnim()
+    public void ScrollTo(int y)
     {
-        try { if (tick != null) Anim.Unsub(tick); } catch { }
-        animating = false;
+        StopAnim();
+        int max = MaxScrollY();
+        if (y < 0) y = 0;
+        if (y > max) y = max;
+        scrollCur = scrollTarget = y;
+        ApplyScroll();
+    }
+
+    // delta — e.Delta (120 = один щелчок колеса).
+    public void WheelScroll(int delta)
+    {
+        if (delta == 0) return;
+        int max = MaxScrollY();
+        if (max <= 0) return;
+        scrollTarget += -delta * 0.55f;
+        if (scrollTarget < 0f) scrollTarget = 0f;
+        if (scrollTarget > max) scrollTarget = max;
+        if (Math.Abs(scrollTarget - scrollCur) < 0.5f) return;
+        EnsureAnim();
     }
 
     void EnsureAnim()
     {
-        if (animating) return;
-        animating = true;
-        if (tick == null)
-            tick = delegate
-            {
-                try
-                {
-                    if (IsDisposed || !IsHandleCreated) { StopAnim(); return; }
-                    float d = scrollTarget - scrollCur;
-                    // РЎС‚РѕРї: С€Р°Рі РЅРёРєРѕРіРґР° РЅРµ Р±РѕР»СЊС€Рµ РѕСЃС‚Р°С‚РєР°, РїРѕСЌС‚РѕРјСѓ С†РµР»СЊ
-                    // РґРѕСЃС‚РёРіР°РµС‚СЃСЏ С‚РѕС‡РЅРѕ Рё Р°РЅРёРјР°С†РёСЏ РЅРµ Р±РѕР»С‚Р°РµС‚СЃСЏ РІРѕРєСЂСѓРі РЅРµС‘.
-                    if (Math.Abs(d) < 0.35f) { scrollCur = scrollTarget; ApplyScroll(); StopAnim(); return; }
-                    float step = d * 0.45f;
-                    if (step > 40f) step = 40f;
-                    if (step < -40f) step = -40f;
-                    if (step > 0f && step < 1.2f) step = 1.2f;
-                    if (step < 0f && step > -1.2f) step = -1.2f;
-                    scrollCur += step;
-                    ApplyScroll();
-                }
-                catch { StopAnim(); }
-            };
-        Anim.Sub(tick);
+        Anim.BoostTimer();
+        if (animTimer == null)
+        {
+            animTimer = new System.Windows.Forms.Timer();
+            // 7 мс при разрешении системного таймера 1 мс: кадры чаще 120 Гц,
+            // под мониторы 144 Гц. Таймер работает только во время прокрутки.
+            animTimer.Interval = 7;
+            animTimer.Tick += delegate { TickAnim(); };
+        }
+        if (!animating)
+        {
+            animating = true;
+            Anim.ScrollStart();
+            lastTick = Stopwatch.GetTimestamp();
+        }
+        if (!animTimer.Enabled) animTimer.Start();
     }
-void ApplyScroll()
+
+    void StopAnim()
+    {
+        if (animating)
+        {
+            animating = false;
+            Anim.ScrollEnd();
+        }
+        if (animTimer != null && animTimer.Enabled) animTimer.Stop();
+    }
+
+    void TickAnim()
+    {
+        try
+        {
+            if (IsDisposed || !IsHandleCreated) { StopAnim(); return; }
+            long now = Stopwatch.GetTimestamp();
+            double dt = (now - lastTick) * 1000.0 / Stopwatch.Frequency;
+            lastTick = now;
+            if (dt < 0.4) return;
+            if (dt > 50.0) dt = 50.0;
+
+            float d = scrollTarget - scrollCur;
+            if (Math.Abs(d) < 0.3f)
+            {
+                scrollCur = scrollTarget;
+                ApplyScroll();
+                StopAnim();
+                return;
+            }
+            // Экспоненциальное сглаживание, независимое от FPS:
+            // на 144 Гц шаг меньше, на 60 Гц больше, путь одинаковый.
+            float k = (float)(1.0 - Math.Exp(-dt / TauMs));
+            if (k < 0.02f) k = 0.02f;
+            if (k > 1f) k = 1f;
+            scrollCur += d * k;
+            if (Math.Abs(scrollTarget - scrollCur) < 0.3f) scrollCur = scrollTarget;
+            ApplyScroll();
+        }
+        catch { StopAnim(); }
+    }
+
+    void ApplyScroll()
     {
         try
         {
@@ -3584,36 +3669,41 @@ void ApplyScroll()
             int y = (int)Math.Round(scrollCur);
             if (y < 0) y = 0;
             if (y > max) y = max;
-            Inner.Top = -y;
-            Invalidate();
+            if (Inner.Top != -y) Inner.Top = -y;
+            appliedY = y;
+            // Перерисовываем только полосу скроллбара, а не весь контрол.
+            Invalidate(new Rectangle(Math.Max(0, ClientSize.Width - BarGutter), 0,
+                BarGutter, ClientSize.Height));
         }
         catch { }
     }
 
     protected override void OnMouseWheel(MouseEventArgs e)
     {
-        try
-        {
-            if (InvokeRequired) { base.OnMouseWheel(e); return; }
-            // ход колеса мельче системного: прокрутка не «прыгает»
-            scrollTarget += -e.Delta / 4.5f;
-            if (scrollTarget < 0) scrollTarget = 0;
-            float max = MaxScrollY();
-            if (scrollTarget > max) scrollTarget = max;
-            EnsureAnim();
-            HandledMouseEventArgs hm = e as HandledMouseEventArgs;
-            if (hm != null) hm.Handled = true;
-        }
-        catch { }
+        WheelScroll(e.Delta);
+        HandledMouseEventArgs hm = e as HandledMouseEventArgs;
+        if (hm != null) hm.Handled = true;
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        int max = MaxScrollY();
+        if (scrollTarget > max) scrollTarget = max;
+        if (scrollCur > max) scrollCur = max;
+        ApplyScroll();
     }
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) StopAnim();
+        if (disposing)
+        {
+            StopAnim();
+            if (animTimer != null) { animTimer.Dispose(); animTimer = null; }
+        }
         base.Dispose(disposing);
     }
 
-    // Узкая полоса прокрутки: рисуется в свободной полосе справа от листа
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
@@ -3639,266 +3729,457 @@ void ApplyScroll()
     }
 }
 
-// Панель-список со своим тонким скроллбаром вместо белого системного
-class DarkFlowPanel : FlowLayoutPanel
+// DarkFlowPanel — список с плавной прокруткой.
+// Все карточки живут в одном внутреннем FlowLayoutPanel. Прокрутка — это
+// сдвиг этого слоя по Y, а не AutoScrollPosition (тот на каждом кадре
+// пересчитывал layout всех детей и перерисовывал их — отсюда лаги).
+class DarkFlowPanel : Panel
 {
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     static extern int ShowScrollBar(IntPtr hWnd, int wBar, bool bShow);
     const int SB_VERT = 1;
 
-    // Плавная прокрутка: колесо копило дельту и ехало к цели по кадрам
-    float scrollCur, scrollTarget;
-    int lastAppliedY = -1;
-    Action tick = null;
-    bool animating;
-    bool resetPending;
-    // «Защёлка верха»: пока пользователь не крутил колесо, любой
-    // самопроизвольный уход списка вниз возвращается назад. Одного
-    // resetPending мало: FlowLayoutPanel умеет уехать позже — после
-    // первого показа, ресайза окна или подмены ClientSize. Из-за
-    // этого список новостей открывался с обрезанной первой карточкой.
-    bool lockTop;
-    // прокручивать ли список к контролу, который получил фокус
-    // (нужно только выпадающим спискам, обычным — нет)
+    class InnerFlow : FlowLayoutPanel
+    {
+        public InnerFlow()
+        {
+            AutoScroll = false;
+            SetStyle(ControlStyles.OptimizedDoubleBuffer
+                | ControlStyles.AllPaintingInWmPaint, true);
+            DoubleBuffered = true;
+        }
+    }
+
+    // Полоса прокрутки поверх потока. Живёт в пустом правом отступе карточек
+    // (у всех списков он не меньше 12px), поэтому её не нужно двигать и она
+    // не может «наехать» на контент.
+    class BarView : Control
+    {
+        readonly DarkFlowPanel owner;
+        bool hover, drag;
+        int grabY;
+
+        public BarView(DarkFlowPanel o)
+        {
+            owner = o;
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+            DoubleBuffered = true;
+            TabStop = false;
+            Cursor = Cursors.Default;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.Clear(BackColor);
+            try
+            {
+                Rectangle thumb; int max, view;
+                if (!owner.BarRect(out thumb, out max, out view)) return;
+                Graphics g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                int x = thumb.X - Left;
+
+                int trackA = (hover || drag) ? 46 : 20;
+                using (GraphicsPath tp = Ui.RoundRect(
+                    new RectangleF(x, 4, thumb.Width, Math.Max(8, view - 8)), DarkFlowPanel.BarW / 2f))
+                using (SolidBrush tb = new SolidBrush(Color.FromArgb(trackA, Ui.Accent1)))
+                    g.FillPath(tb, tp);
+
+                int grow = (hover || drag) ? 1 : 0;
+                RectangleF tr = new RectangleF(x - grow, thumb.Y,
+                    thumb.Width + grow * 2f, thumb.Height);
+                using (GraphicsPath bp = Ui.RoundRect(tr, (thumb.Width + grow * 2f) / 2f))
+                {
+                    Color c0 = drag ? Ui.Accent2
+                             : hover ? Ui.Accent1
+                                     : Color.FromArgb(150, 148, 140, 200);
+                    using (SolidBrush bb = new SolidBrush(c0))
+                        g.FillPath(bb, bp);
+                }
+            }
+            catch { }
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            try
+            {
+                Rectangle thumb; int max, view;
+                if (!owner.BarRect(out thumb, out max, out view)) return;
+                int x = thumb.X - Left;
+                if (e.X < x - 4) return;
+                if (e.Y >= thumb.Y && e.Y <= thumb.Bottom)
+                {
+                    drag = true;
+                    grabY = e.Y - thumb.Y;
+                    Capture = true;
+                    Cursor = Cursors.Hand;
+                }
+                else
+                {
+                    int span = Math.Max(1, view - thumb.Height);
+                    int y = (int)((e.Y - thumb.Height / 2f) * (float)max / span);
+                    owner.ScrollTo(y);
+                }
+                Invalidate();
+            }
+            catch { }
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            try
+            {
+                Rectangle thumb; int max, view;
+                if (!owner.BarRect(out thumb, out max, out view)) return;
+                int x = thumb.X - Left;
+                bool over = e.X >= x - 4;
+                if (over != hover)
+                {
+                    hover = over;
+                    Cursor = over ? Cursors.Hand : Cursors.Default;
+                    Invalidate();
+                }
+                if (drag)
+                {
+                    int span = Math.Max(1, view - thumb.Height);
+                    int top = e.Y - grabY;
+                    int y = (int)(top * (float)max / span);
+                    owner.ScrollTo(y);
+                }
+            }
+            catch { }
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (drag)
+            {
+                drag = false;
+                Capture = false;
+                Cursor = hover ? Cursors.Hand : Cursors.Default;
+                Invalidate();
+            }
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            base.OnMouseLeave(e);
+            if (!drag && hover)
+            {
+                hover = false;
+                Cursor = Cursors.Default;
+                Invalidate();
+            }
+        }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            owner.WheelScroll(e.Delta);
+            HandledMouseEventArgs hm = e as HandledMouseEventArgs;
+            if (hm != null) hm.Handled = true;
+        }
+
+        protected override void OnMouseEnter(EventArgs e)
+        {
+            base.OnMouseEnter(e);
+            hover = true;
+            Cursor = Cursors.Hand;
+            Invalidate();
+        }
+    }
+
+    InnerFlow flow;
+    BarView bar;
     public bool FocusScroll;
-    // Дошли до низа списка (осталось меньше ~320px) — можно дозагрузить
-    // следующую порцию карточек. Вызывается только когда пользователь
-    // реально крутил колесо, а не при сбросе в начало.
     public Action NearBottom;
 
-    // ---- кастомная полоса прокрутки ----
-    // Раньше это была рисуемая линия 3px: её нельзя было ни схватить,
-    // ни навести, и она дёргалась вместе с анимацией. Теперь у полосы
-    // есть состояние (наведение/перетаскивание), а положение считается
-    // от инвариантного ContentHeight.
-    bool barHover, barDrag;
-    int dragGrabY;
-    int dragStartScroll;
-    const int BarW = 6;      // видимая ширина бегунка
-    const int BarHit = 14;   // зона захвата мышью (шире, чем видно)
+    float scrollCur, scrollTarget;
+    int appliedY = -1;
+    bool nearFired;
+    bool syncing;
+    bool syncScheduled;
+    bool animating;
+    long lastTick;
+    System.Windows.Forms.Timer animTimer;
+    const double TauMs = 38.0;
 
-    Rectangle BarTrack()
+    const int BarW = 6;
+    const int BarGutter = 10;
+
+    public DarkFlowPanel()
     {
-        return new Rectangle(Math.Max(0, ClientSize.Width - BarHit), 0, BarHit, ClientSize.Height);
+        SetStyle(ControlStyles.OptimizedDoubleBuffer
+            | ControlStyles.AllPaintingInWmPaint
+            | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+        DoubleBuffered = true;
+        BackColor = Ui.Bg;
+        WheelRouter.Ensure();
+
+        flow = new InnerFlow();
+        flow.WrapContents = false;
+        flow.FlowDirection = FlowDirection.TopDown;
+        flow.BackColor = Ui.Bg;
+        flow.Location = new Point(0, 0);
+        flow.Size = new Size(Math.Max(1, ClientSize.Width),
+                             Math.Max(1, ClientSize.Height));
+        base.Controls.Add(flow);
+        flow.ControlAdded += delegate { ScheduleSync(); };
+        flow.ControlRemoved += delegate { ScheduleSync(); };
+        flow.Layout += delegate { if (!syncing) ScheduleSync(); };
+
+        bar = new BarView(this);
+        bar.BackColor = BackColor;
+        bar.Bounds = new Rectangle(Math.Max(0, ClientSize.Width - BarGutter), 0,
+            BarGutter, ClientSize.Height);
+        base.Controls.Add(bar);
+        bar.BringToFront();
     }
 
-    // Прокрутка к позиции без анимации (перетаскивание полосы)
-    void ScrollTo(int y)
+    // list.Controls.Add(...) должен попадать во внутренний слой.
+    public new Control.ControlCollection Controls
     {
-        int max = MaxScrollY();
-        if (y < 0) y = 0;
-        if (y > max) y = max;
-        // Снимаем защёлку верха: иначе OnLayout тут же вернёт позицию
-        // в 0 (она защищает первую карточку от гонки при пересоздании).
-        lockTop = false;
-        scrollCur = scrollTarget = y;
-        ApplyScroll();
+        get { return flow == null ? base.Controls : flow.Controls; }
     }
 
-    // --- отладка скролла (--shot-run scrollto:N) ---
-    public int DebugMaxScroll() { return MaxScrollY(); }
-    public int DebugScrollPos() { return -AutoScrollPosition.Y; }
-    public void DebugScrollTo(int y) { ScrollTo(y); }
+    // --- совместимость с прежним API панели ---
 
-    // Текущая позиция и мягкое восстановление: списки пересобираются
-    // при догрузке картинок, и ResetScroll возвращал пользователя в
-    // начало — прокрутка «отскакивала» наверх сама по себе.
-    public int ScrollY { get { return -AutoScrollPosition.Y; } }
+    public new bool AutoScroll
+    {
+        get { return false; }
+        set { /* прокруткой управляет панель, автоскролл не нужен */ }
+    }
+
+    public new Point AutoScrollPosition
+    {
+        get { return new Point(0, -ScrollY); }
+        set { ScrollTo(value.Y); }
+    }
+
+    public bool WrapContents
+    {
+        get { return flow != null && flow.WrapContents; }
+        set { if (flow != null) { flow.WrapContents = value; ScheduleSync(); } }
+    }
+
+    public FlowDirection FlowDirection
+    {
+        get { return flow == null ? FlowDirection.TopDown : flow.FlowDirection; }
+        set { if (flow != null) { flow.FlowDirection = value; ScheduleSync(); } }
+    }
+
+    public int ScrollY
+    {
+        get
+        {
+            int y = appliedY < 0 ? 0 : appliedY;
+            return y;
+        }
+    }
+
+    // Отладка: реальный сдвиг слоя (должен совпадать с -ScrollY).
+    public int DebugFlowTop { get { return flow == null ? 0 : flow.Top; } }
+    public int DebugFlowHeight { get { return flow == null ? 0 : flow.Height; } }
+    public int DebugFirstTop
+    {
+        get
+        {
+            try
+            {
+                return flow == null || flow.Controls.Count == 0
+                    ? -99999 : flow.Controls[0].Top;
+            }
+            catch { return -99999; }
+        }
+    }
+
+    public int MaxScrollY()
+    {
+        try
+        {
+            if (flow == null) return 0;
+            int max = flow.Height - ClientSize.Height;
+            return max > 0 ? max : 0;
+        }
+        catch { return 0; }
+    }
+
+    public void ResetScroll()
+    {
+        StopAnim();
+        scrollCur = 0f;
+        scrollTarget = 0f;
+        nearFired = false;
+        SyncContent();
+        ScrollTo(0);
+    }
+
     public void RestoreScroll(int y)
     {
         try
         {
-            if (y <= 0) return;
+            SyncContent();
             ScrollTo(y);
         }
         catch { }
     }
 
-    // Геометрия бегунка; false — прокручивать нечего
-    bool BarRect(out Rectangle thumb, out int max, out int view)
+    public new void ScrollControlIntoView(Control c)
     {
-        thumb = Rectangle.Empty;
-        max = MaxScrollY();
-        view = ClientSize.Height;
-        if (max <= 0 || view <= 20) return false;
-        int need = max + view;
-        int h = Math.Max(36, (int)(view * (float)view / need));
-        if (h > view) h = view;
-        int top = (int)Math.Round(-AutoScrollPosition.Y * (view - h) / (float)max);
-        if (top < 0) top = 0;
-        if (top + h > view) top = view - h;
-        thumb = new Rectangle(Math.Max(0, ClientSize.Width - BarW - 2), top, BarW, h);
-        return true;
-    }
-
-    protected override void OnMouseDown(MouseEventArgs e)
-    {
-        base.OnMouseDown(e);
+        if (c == null || flow == null) return;
         try
         {
-            Rectangle thumb; int max, view;
-            if (!BarRect(out thumb, out max, out view)) return;
-            Rectangle hit = new Rectangle(thumb.X - (BarHit - BarW - 2), thumb.Y, BarHit, thumb.Height);
-            if (hit.Contains(e.Location))
-            {
-                barDrag = true;
-                dragGrabY = e.Y - thumb.Y;
-                dragStartScroll = -AutoScrollPosition.Y;
-                Capture = true;
-                Invalidate(BarTrack());
-            }
-            else if (BarTrack().Contains(e.Location))
-            {
-                // клик по дорожке — прыжок к этой точке
-                int span = Math.Max(1, view - thumb.Height);
-                int y = (int)((e.Y - thumb.Height / 2f) * (float)max / span);
-                ScrollTo(y);
-                Invalidate(BarTrack());
-            }
+            SyncContent();
+            Rectangle b = c.Bounds;
+            int view = ClientSize.Height;
+            int top = ScrollY;
+            if (b.Bottom > top + view) ScrollTo(b.Bottom - view + 4);
+            else if (b.Top < top) ScrollTo(b.Top - 4);
         }
         catch { }
     }
 
-    protected override void OnMouseMove(MouseEventArgs e)
-    {
-        base.OnMouseMove(e);
-        try
-        {
-            Rectangle thumb; int max, view;
-            bool over = BarRect(out thumb, out max, out view) && BarTrack().Contains(e.Location);
-            if (over != barHover)
-            {
-                barHover = over;
-                Cursor = over ? Cursors.Hand : Cursors.Default;
-                Invalidate(BarTrack());
-            }
-            if (barDrag && max > 0)
-            {
-                // позиция считается от точки захвата — бегунок не «убегает»
-                int span = Math.Max(1, view - thumb.Height);
-                int y = dragStartScroll + (int)((e.Y - dragGrabY) * (float)max / span);
-                ScrollTo(y);
-                Invalidate(BarTrack());
-            }
-        }
-        catch { }
-    }
-
-    protected override void OnMouseUp(MouseEventArgs e)
-    {
-        base.OnMouseUp(e);
-        if (barDrag)
-        {
-            barDrag = false;
-            Capture = false;
-            Invalidate(BarTrack());
-        }
-    }
-
-    protected override void OnMouseLeave(EventArgs e)
-    {
-        base.OnMouseLeave(e);
-        if (!barDrag && barHover)
-        {
-            barHover = false;
-            Cursor = Cursors.Default;
-            Invalidate(BarTrack());
-        }
-    }
-
-    public DarkFlowPanel()
-    {
-        AutoScroll = true;
-        WrapContents = false;
-        FlowDirection = FlowDirection.TopDown;
-        BackColor = Ui.Bg;
-        // FlowLayoutPanel без буфера заметно мерцает при прокрутке
-        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
-        SetStyle(ControlStyles.Opaque, true);
-        DoubleBuffered = true;
-    }
-
-    public void ResetScroll()
+    public void ScrollTo(int y)
     {
         try
         {
             StopAnim();
-            scrollCur = 0; scrollTarget = 0;
-            lastAppliedY = -1;
-            lockTop = true;
-            // сброс сразу после добавления элементов не прилипает:
-            // AutoScrollPosition применяется уже в следующем проходе
-            // раскладки, поэтому помечаем и роняем после OnLayout
-            resetPending = true;
+            nearFired = false;
+            int max = MaxScrollY();
+            if (y < 0) y = 0;
+            if (y > max) y = max;
+            scrollCur = scrollTarget = y;
             ApplyScroll();
-            // и ещё раз в следующих проходах сообщений: после добавления
-            // карточек FlowLayoutPanel успевает уехать вниз сам, а при
-            // асинхронной подгрузке картинок — ещё и позже
-            try
-            {
-                BeginInvoke(new Action(delegate
-                {
-                    try
-                    {
-                        resetPending = true;
-                        AutoScrollPosition = Point.Empty;
-                        HideNative();
-                        // второй заход: к этому моменту размер содержимого
-                        // уже посчитан, иначе прокрутка «отскакивает» назад
-                        BeginInvoke(new Action(delegate
-                        {
-                            try
-                            {
-                                if (lockTop)
-                                {
-                                    AutoScrollPosition = Point.Empty;
-                                    HideNative();
-                                }
-                            }
-                            catch { }
-                        }));
-                    }
-                    catch { }
-                }));
-            }
-            catch { }
         }
         catch { }
     }
 
-    void StopAnim()
+    public void DebugScrollTo(int y) { ScrollTo(y); }
+    public int DebugMaxScroll() { return MaxScrollY(); }
+    public int DebugScrollPos() { return ScrollY; }
+
+    // delta — e.Delta (120 = один щелчок колеса).
+    public void WheelScroll(int delta)
     {
-        try { if (tick != null) Anim.Unsub(tick); } catch { }
-        animating = false;
+        try
+        {
+            if (delta == 0) return;
+            int max = MaxScrollY();
+            if (max <= 0) return;
+            scrollTarget += -delta * 0.55f;
+            if (scrollTarget < 0f) scrollTarget = 0f;
+            if (scrollTarget > max) scrollTarget = max;
+            if (Math.Abs(scrollTarget - scrollCur) < 0.5f) return;
+            EnsureAnim();
+        }
+        catch { }
+    }
+
+    // --- внутренняя механика ---
+
+    void ScheduleSync()
+    {
+        if (syncing || syncScheduled || IsDisposed) return;
+        if (!IsHandleCreated) { SyncContent(); return; }
+        syncScheduled = true;
+        try
+        {
+            BeginInvoke(new Action(delegate
+            {
+                syncScheduled = false;
+                SyncContent();
+            }));
+        }
+        catch { syncScheduled = false; }
+    }
+
+    void SyncContent()
+    {
+        if (flow == null || syncing || IsDisposed) return;
+        syncing = true;
+        try
+        {
+            // Поток занимает всю ширину: карточки с фиксированной шириной
+            // (моды, плащи) не должны менять число колонок из-за полосы.
+            int w = Math.Max(1, ClientSize.Width);
+            if (flow.Width != w) flow.Width = w;
+            int need = flow.GetPreferredSize(new Size(w, 0)).Height;
+            if (need < ClientSize.Height) need = ClientSize.Height;
+            if (flow.Height != need) flow.Height = need;
+            int max = flow.Height - ClientSize.Height;
+            if (max < 0) max = 0;
+            if (scrollTarget > max) scrollTarget = max;
+            if (scrollCur > max) scrollCur = max;
+            int y = (int)Math.Round(scrollCur);
+            if (y < 0) y = 0;
+            if (y > max) y = max;
+            if (flow.Top != -y) flow.Top = -y;
+            appliedY = y;
+        }
+        catch { }
+        finally { syncing = false; }
+        InvalidateBar();
     }
 
     void EnsureAnim()
     {
-        if (animating) return;
-        animating = true;
-        if (tick == null)
-            tick = delegate
+        Anim.BoostTimer();
+        if (animTimer == null)
+        {
+            animTimer = new System.Windows.Forms.Timer();
+            animTimer.Interval = 7;
+            animTimer.Tick += delegate { TickAnim(); };
+        }
+        if (!animating)
+        {
+            animating = true;
+            Anim.ScrollStart();
+            lastTick = Stopwatch.GetTimestamp();
+        }
+        if (!animTimer.Enabled) animTimer.Start();
+    }
+
+    void StopAnim()
+    {
+        if (animating)
+        {
+            animating = false;
+            Anim.ScrollEnd();
+        }
+        if (animTimer != null && animTimer.Enabled) animTimer.Stop();
+    }
+
+    void TickAnim()
+    {
+        try
+        {
+            if (IsDisposed || !IsHandleCreated) { StopAnim(); return; }
+            long now = Stopwatch.GetTimestamp();
+            double dt = (now - lastTick) * 1000.0 / Stopwatch.Frequency;
+            lastTick = now;
+            if (dt < 0.4) return;
+            if (dt > 50.0) dt = 50.0;
+
+            float d = scrollTarget - scrollCur;
+            if (Math.Abs(d) < 0.3f)
             {
-                try
-                {
-                    if (IsDisposed || !IsHandleCreated) { StopAnim(); return; }
-                    float d = scrollTarget - scrollCur;
-                    // остаток меньше полпикселя — доводим и гасим анимацию
-                    if (Math.Abs(d) < 0.35f) { scrollCur = scrollTarget; ApplyScroll(); StopAnim(); return; }
-                    // Ease-out: чем ближе к цели, тем меньше шаг.
-                    // Степень "плавности" регулируется коэффициентом 0.32f.
-                    float step = d * 0.32f;
-                    if (step > 28f) step = 28f;
-                    if (step < -28f) step = -28f;
-                    // минимальный шаг, чтобы не зависать в бесконечном приближении
-                    if (step > 0f && step < 0.9f) step = 0.9f;
-                    if (step < 0f && step > -0.9f) step = -0.9f;
-                    scrollCur += step;
-                    ApplyScroll();
-                }
-                catch { StopAnim(); }
-            };
-        Anim.Sub(tick);
+                scrollCur = scrollTarget;
+                ApplyScroll();
+                StopAnim();
+                return;
+            }
+            float k = (float)(1.0 - Math.Exp(-dt / TauMs));
+            if (k < 0.02f) k = 0.02f;
+            if (k > 1f) k = 1f;
+            scrollCur += d * k;
+            if (Math.Abs(scrollTarget - scrollCur) < 0.3f) scrollCur = scrollTarget;
+            ApplyScroll();
+        }
+        catch { StopAnim(); }
     }
 
     void ApplyScroll()
@@ -3909,49 +4190,107 @@ class DarkFlowPanel : FlowLayoutPanel
             int y = (int)Math.Round(scrollCur);
             if (y < 0) y = 0;
             if (y > max) y = max;
-            if (y == lastAppliedY) return;
-            lastAppliedY = y;
-            AutoScrollPosition = new Point(0, y);
-            HideNative();
-            // полосу прокрутки рисуем поверх содержимого — без
-            // перерисовки она остаётся на старой позиции
-            Invalidate(new Rectangle(Math.Max(0, ClientSize.Width - 14), 0, 14, ClientSize.Height));
-            if (NearBottom != null && max > 0 && scrollTarget > 2f && y >= max - 320)
-                NearBottom();
+            bool moved = y != appliedY;
+            if (moved)
+            {
+                appliedY = y;
+                flow.Top = -y;
+                InvalidateBar();
+            }
+            if (NearBottom != null)
+            {
+                bool near = max > 0 && y >= max - 320 && scrollTarget > 2f;
+                if (near && !nearFired)
+                {
+                    nearFired = true;
+                    try { NearBottom(); } catch { }
+                }
+                else if (!near) nearFired = false;
+            }
         }
         catch { }
     }
 
-    // Полная высота содержимого НЕ зависит от текущей прокрутки.
-    // Раньше здесь суммировался c.Bottom детей, а они при скролле
-    // сдвигаются вверх на AutoScrollPosition — максимум «уезжал»,
-    // список упирался в случайное место и пружинил назад. Теперь
-    // прибавляем текущее смещение: величина инвариантна.
-    int ContentHeight()
+    void InvalidateBar()
     {
-        try
-        {
-            int off = -AutoScrollPosition.Y;
-            int need = 0;
-            foreach (Control c in Controls)
-            {
-                if (!c.Visible) continue;
-                int bottom = c.Bottom + c.Margin.Bottom;
-                if (bottom > need) need = bottom;
-            }
-            return need + off;
-        }
-        catch { return 0; }
+        try { if (bar != null) bar.Invalidate(); } catch { }
     }
 
-    int MaxScrollY()
+    public bool BarRect(out Rectangle thumb, out int max, out int view)
     {
+        thumb = Rectangle.Empty;
+        max = MaxScrollY();
+        view = ClientSize.Height;
+        if (max <= 0 || view <= 20) return false;
+        int need = max + view;
+        int h = Math.Max(36, (int)(view * (float)view / need));
+        if (h > view) h = view;
+        int y = ScrollY;
+        int top = (int)Math.Round(y * (view - h) / (float)max);
+        if (top < 0) top = 0;
+        if (top + h > view) top = view - h;
+        thumb = new Rectangle(Math.Max(0, ClientSize.Width - BarW - 2), top, BarW, h);
+        return true;
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        // Всю площадь закрывают поток и полоса прокрутки; здесь только
+        // заливка фона, чтобы при ресайзе не мелькали непрокрашенные пиксели.
         try
         {
-            int max = ContentHeight() - ClientSize.Height;
-            return max > 0 ? max : 0;
+            using (SolidBrush b = new SolidBrush(BackColor))
+                e.Graphics.FillRectangle(b, ClientRectangle);
         }
-        catch { return 0; }
+        catch { }
+    }
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        WheelScroll(e.Delta);
+        HandledMouseEventArgs hm = e as HandledMouseEventArgs;
+        if (hm != null) hm.Handled = true;
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        if (bar != null)
+            bar.Bounds = new Rectangle(Math.Max(0, ClientSize.Width - BarGutter), 0,
+                BarGutter, ClientSize.Height);
+        SyncContent();
+    }
+
+    protected override void OnLayout(LayoutEventArgs e)
+    {
+        base.OnLayout(e);
+        if (syncing) return;
+        // Сдвиг потока при прокрутке — тоже смена Bounds и тоже Layout
+        // родителя. Пересчёт размеров содержимого в этот момент не нужен,
+        // иначе GetPreferredSize вызывался бы на каждом кадре прокрутки.
+        if (e != null && e.AffectedControl == flow && e.AffectedProperty == "Bounds") return;
+        SyncContent();
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        HideNative();
+        SyncContent();
+    }
+
+    protected override void OnVisibleChanged(EventArgs e)
+    {
+        base.OnVisibleChanged(e);
+        if (Visible) SyncContent();
+        else StopAnim();
+    }
+
+    protected override void OnBackColorChanged(EventArgs e)
+    {
+        base.OnBackColorChanged(e);
+        if (flow != null) flow.BackColor = BackColor;
+        if (bar != null) bar.BackColor = BackColor;
     }
 
     void HideNative()
@@ -3960,141 +4299,89 @@ class DarkFlowPanel : FlowLayoutPanel
         try
         {
             if (!IsHandleCreated) return;
-            // ТОЛЬКО вертикальный. Скрытие горизонтального (ShowScrollBar
-            // SB_HORIZ=false) ломает отрисовку всего содержимого
-            // FlowLayoutPanel — список становится пустым.
             ShowScrollBar(Handle, SB_VERT, false);
-        }
-        catch { }
-    }
-
-    protected override void OnHandleCreated(EventArgs e)
-    {
-        base.OnHandleCreated(e);
-        HideNative();
-    }
-
-    protected override void OnLayout(LayoutEventArgs e)
-    {
-        base.OnLayout(e);
-        HideNative();
-        // содержимое изменилось — перерисовываем полосу прокрутки
-        try { Invalidate(new Rectangle(Math.Max(0, ClientSize.Width - 14), 0, 14, ClientSize.Height)); } catch { }
-        if (resetPending)
-        {
-            resetPending = false;
-            scrollCur = 0; scrollTarget = 0;
-            lockTop = true;
-            try { AutoScrollPosition = Point.Empty; } catch { }
-            HideNative();
-        }
-        // Пока пользователь не крутил колесо, список обязан начинаться
-        // с первого элемента: FlowLayoutPanel после добавления карточек
-        // умеет сам уехать вниз на полсотни пикселей.
-        if (lockTop)
-        {
-            scrollCur = 0; scrollTarget = 0;
-            try
-            {
-                // Полная принудительная защёлка: гонка добавления hwnd-
-                // контролов (CapeView, кнопки карточек) успевает сдвинуть
-                // AutoScrollPosition ПОСЛЕ ResetScroll и ПОСЛЕ этого
-                // OnLayout. Сбрасываем явно при каждом проходе.
-                if (AutoScrollPosition != Point.Empty) AutoScrollPosition = Point.Empty;
-            }
-            catch { }
-        }
-    }
-
-    // Без этого FlowLayoutPanel прокручивает список к контролу, который
-    // получил фокус (и список открывается с середины).
-    protected override Point ScrollToControl(Control activeControl)
-    {
-        // Не только не скроллим к активному контролу — возвращаем ровно
-        // верх списка. DisplayRectangle.Location вернул бы ТЕКУЩИЙ
-        // сдвиг: если гонка при пересоздании карточек успела сдвинуть
-        // панель, этот сдвиг закреплялся бы вместо отката к верху.
-        if (!FocusScroll) return Point.Empty;
-        return base.ScrollToControl(activeControl);
-    }
-
-    protected override void OnMouseWheel(MouseEventArgs e)
-    {
-        try
-        {
-            if (InvokeRequired) { base.OnMouseWheel(e); return; }
-            // пользователь взял управление — защёлку верха снимаем
-            lockTop = false;
-            // Плавный скролл с ускорением: шаг пропорционален дельте колеса
-            scrollTarget += -e.Delta / 3.0f;
-            if (scrollTarget < 0) scrollTarget = 0;
-            float max = MaxScrollY();
-            if (scrollTarget > max) scrollTarget = max;
-            if (max > 0) EnsureAnim();
-            HandledMouseEventArgs hm = e as HandledMouseEventArgs;
-            if (hm != null) hm.Handled = true;
         }
         catch { }
     }
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) StopAnim();
+        if (disposing)
+        {
+            StopAnim();
+            if (animTimer != null) { animTimer.Dispose(); animTimer = null; }
+        }
         base.Dispose(disposing);
     }
+}
 
-    // Системный скроллбар скрыт (он белый и выбивается из темы), но тогда
-    // у списка не оставалось НИ ОДНОГО признака, что содержимое можно
-    // прокрутить. Рисуем тонкую полосу у правого края + мягкое затухание
-    // снизу: без него карточка обрезается посреди текста, и это читается
-    // как дефект вёрстки, а не как продолжение списка.
-    protected override void OnPaint(PaintEventArgs e)
+// Колесо мыши над карточками: Windows отправляет WM_MOUSEWHEEL контролу
+// под курсором, и событие не всегда доходит до списка. Фильтр находит
+// ближайший прокручиваемый контейнер и прокручивает именно его.
+static class WheelRouter
+{
+    [System.Runtime.InteropServices.StructLayout(
+        System.Runtime.InteropServices.LayoutKind.Sequential)]
+    struct POINT { public int X, Y; }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern IntPtr WindowFromPoint(POINT pt);
+
+    const int WM_MOUSEWHEEL = 0x020A;
+    static bool installed;
+
+    public static void Ensure()
     {
-        base.OnPaint(e);
-        try
+        if (installed) return;
+        installed = true;
+        try { Application.AddMessageFilter(new Filter()); }
+        catch { }
+    }
+
+    class Filter : IMessageFilter
+    {
+        public bool PreFilterMessage(ref Message m)
         {
-            int view = ClientSize.Height;
-            int w = ClientSize.Width;
-
-            // ---- кастомная полоса прокрутки ----
-            Rectangle thumb; int max, vh;
-            if (BarRect(out thumb, out max, out vh))
+            if (m.Msg != WM_MOUSEWHEEL) return false;
+            try
             {
-                Graphics g = e.Graphics;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
+                long lp = m.LParam.ToInt64();
+                POINT pt = new POINT();
+                pt.X = (short)(lp & 0xFFFF);
+                pt.Y = (short)((lp >> 16) & 0xFFFF);
+                int delta = (short)((m.WParam.ToInt64() >> 16) & 0xFFFF);
+                if (delta == 0) return false;
 
-                // дорожка: почти невидимая, проявляется при наведении
-                int trackA = (barHover || barDrag) ? 46 : 20;
-                using (GraphicsPath tp = Ui.RoundRect(
-                    new RectangleF(thumb.X, 4, thumb.Width, Math.Max(8, view - 8)), BarW / 2f))
-                using (SolidBrush tb = new SolidBrush(Color.FromArgb(trackA, Ui.Accent1)))
-                    g.FillPath(tb, tp);
-
-                // бегунок: пилюля; при наведении шире и светлее
-                int grow = (barHover || barDrag) ? 1 : 0;
-                RectangleF tr = new RectangleF(
-                    thumb.X - grow, thumb.Y, thumb.Width + grow * 2f, thumb.Height);
-                using (GraphicsPath bp = Ui.RoundRect(tr, (thumb.Width + grow * 2f) / 2f))
+                Control c = Control.FromHandle(WindowFromPoint(pt));
+                if (c == null) return false;
+                Control t = c;
+                while (t != null)
                 {
-                    Color c0 = barDrag ? Ui.Accent2
-                             : barHover ? Ui.Accent1
-                                        : Color.FromArgb(150, 148, 140, 200);
-                    using (SolidBrush bb = new SolidBrush(c0))
-                        g.FillPath(bb, bp);
+                    // текстовые поля и списки должны прокручиваться сами
+                    if (t is TextBoxBase || t is ListBox || t is ComboBox) return false;
+
+                    DarkFlowPanel p = t as DarkFlowPanel;
+                    if (p != null)
+                    {
+                        if (p.Visible && p.MaxScrollY() > 0)
+                        {
+                            p.WheelScroll(delta);
+                            return true;
+                        }
+                        return false;
+                    }
+                    ScrollPanel sp = t as ScrollPanel;
+                    if (sp != null)
+                    {
+                        sp.WheelScroll(delta);
+                        return true;
+                    }
+                    t = t.Parent;
                 }
             }
-
-            // затухание снизу: список продолжается, а не «режется»
-            int fadeH = Math.Min(26, view / 4);
-            if (fadeH > 4 && -AutoScrollPosition.Y < MaxScrollY() - 2)
-            {
-                using (LinearGradientBrush f = new LinearGradientBrush(
-                    new Rectangle(0, view - fadeH, Math.Max(2, w), Math.Max(2, fadeH)),
-                    Color.FromArgb(0, Ui.Bg), Color.FromArgb(210, Ui.Bg), 90f))
-                    e.Graphics.FillRectangle(f, 0, view - fadeH, w, fadeH);
-            }
+            catch { }
+            return false;
         }
-        catch { }
     }
 }
 
@@ -4268,6 +4555,9 @@ class Dropdown : Control
         SelectedIndex = i;
         if (popup != null) { try { popup.Close(); } catch { } popup = null; }
     }
+
+    // Снимки: открыть выпадающий список без клика мышью.
+    public void DebugOpenPopup() { TogglePopup(); }
 }
 
 class PopupList : Form
@@ -4338,7 +4628,9 @@ class PopupList : Form
                 b.PressTop = Ui.Lerp(Ui.Surface, Color.Black, 0.2f);
                 b.PressBottom = b.PressTop;
             }
-            b.Size = new Size(w - Pad2 * 2 - SystemInformation.VerticalScrollBarWidth, 30);
+            // ширина пункта: правый отступ = полоса прокрутки (10px) + 2px зазор,
+            // иначе между текстом и полосой остаётся «дыра» от нативного скроллбара
+            b.Size = new Size(w - Pad2 * 2 - 12, 30);
             b.Margin = new Padding(0, 0, 0, 2);
             int idx = i;
             b.Click += delegate { owner.Pick(idx); };
@@ -4359,6 +4651,13 @@ class PopupList : Form
     {
         base.OnShown(e);
         try { if (selBtn != null) list.ScrollControlIntoView(selBtn); } catch { }
+        try
+        {
+            if (Cfg.Dbg)
+                File.AppendAllText(Path.Combine(Cfg.BaseDir, "shot_args.txt"),
+                    "\r\nPOPUP shown " + Bounds + " active=" + Form.ActiveForm, Encoding.UTF8);
+        }
+        catch { }
     }
 
     protected override void OnMouseWheel(MouseEventArgs e)
@@ -4366,10 +4665,10 @@ class PopupList : Form
         base.OnMouseWheel(e);
         try
         {
-            int cur = -list.AutoScrollPosition.Y;
-            int y = cur - e.Delta;
-            if (y < 0) y = 0;
-            list.AutoScrollPosition = new Point(0, y);
+            // Та же плавная прокрутка, что и везде в лаунчере.
+            list.WheelScroll(e.Delta);
+            HandledMouseEventArgs hm = e as HandledMouseEventArgs;
+            if (hm != null) hm.Handled = true;
         }
         catch { }
     }
@@ -4730,7 +5029,8 @@ class BannerPanel : Panel
         t.Interval = 50;
         t.Tick += delegate
         {
-            if (IsDisposed || !IsHandleCreated || !Animate) return;
+            if (IsDisposed || !IsHandleCreated || !Animate || !Visible) return;
+            if (Anim.Scrolling) return;
             phase += 0.018f;
             Invalidate();
         };
@@ -5786,12 +6086,7 @@ partial class LauncherForm : Form
         verList.WrapContents = true;
         verList.FlowDirection = FlowDirection.LeftToRight;
         verList.NearBottom = LoadMoreVersions;
-        // Карточки нижнего ряда рисуются поверх соседей и «выползали»
-        // за панель наезжая на блок «Популярные моды». SetClip в Paint
-        // режет только собственную отрисовку панели, поэтому клипуем
-        // Region'ом — он действует и на дочерние контролы.
         verListBox.Controls.Add(verList);
-        verList.Region = new Region(new Rectangle(Point.Empty, verList.Size));
 
         // ===== Популярные моды =====
         popularBlock = new Panel();
@@ -6328,7 +6623,8 @@ partial class LauncherForm : Form
         // приходит извне (было client=0x0). Возвращаем рабочий размер.
         try
         {
-            if (ClientSize.Width < 600 || ClientSize.Height < 400)
+            if (WindowState != FormWindowState.Minimized &&
+                (ClientSize.Width < 600 || ClientSize.Height < 400))
                 Size = new Size(1180, 780);
         }
         catch { }
@@ -6558,9 +6854,6 @@ partial class LauncherForm : Form
             verListBox.Location = new Point(PX, vbY);
             verListBox.Size = new Size(PW, vbH);
             verList.Size = new Size(PW, vbH);
-            // Region клипа должен следовать за размером панели,
-            // иначе после растяжения окна список рисуется в старых границах
-            try { verList.Region = new Region(new Rectangle(Point.Empty, verList.Size)); } catch { }
             popularBlock.Location = new Point(PX, H - Marg - popH + 6);
             popularBlock.Size = new Size(PW, popH - 6);
 
@@ -6623,6 +6916,18 @@ partial class LauncherForm : Form
                 modsUi[4].Width = w;                              // строка поиска
                 modsList.Location = new Point(SecX, SecY + 178);
                 modsList.Size = new Size(w, h - 178);
+                // Прозрачная подпись статуса перерисовывает фон родителя и
+                // затирает всё, что под ней: при узком окне она наезжала на
+                // кнопку «Обновить» (правый край панели). Сжимаем её до кнопки.
+                if (modsStatTxt != null && modsReload != null)
+                {
+                    // кнопка прижата к правому краю с отступом 16px (Anchor Right)
+                    int reloadLeft = modsUi[3].Width - 16 - modsReload.Width;
+                    int statW = reloadLeft - modsStatTxt.Left - 10;
+                    if (statW > 260) statW = 260;
+                    if (statW < 0) statW = 0;
+                    if (modsStatTxt.Width != statW) modsStatTxt.Width = statW;
+                }
             }
             LayoutSkin(w, h);
             LayoutFriends(w, h);
@@ -7100,17 +7405,35 @@ partial class LauncherForm : Form
     {
         try
         {
-            // Берём ВИДИМЫЙ список с самым большим содержимым: в форме
-            // живут панели всех разделов, скрытые тоже Visible=true на
-            // уровне контрола, но их родитель скрыт — проверяем предков.
-            DarkFlowPanel best = null;
-            int bestMax = 0;
-            foreach (Control c in Controls)
+            // Скроллим список активного раздела: по view он известен точно.
+            // Иначе в форме можно найти чужой список (у неактивных Visible=true,
+            // но они лежат под панелью активного раздела).
+            DarkFlowPanel best = view == ViewHome ? verList
+                               : view == ViewNews ? newsList
+                               : view == ViewMods ? modsList
+                               : view == ViewFriends ? friendsList
+                               : view == ViewCapes ? capesList : null;
+            if (best != null && !VisibleDeep(best)) best = null;
+            if (best == null)
             {
-                DarkFlowPanel p = c as DarkFlowPanel;
-                if (p == null || !VisibleDeep(p)) continue;
-                int m = p.DebugMaxScroll();
-                if (m > bestMax) { bestMax = m; best = p; }
+                // Запасной путь: самый большой видимый список, не закрытый слоем.
+                int bestMax = 0;
+                for (int i = 0; i < Controls.Count; i++)
+                {
+                    DarkFlowPanel p = Controls[i] as DarkFlowPanel;
+                    if (p == null || !VisibleDeep(p)) continue;
+                    bool covered = false;
+                    int px = p.Left + 6, py = p.Top + 6;
+                    for (int j = 0; j < i; j++)
+                    {
+                        Control o = Controls[j];
+                        if (o == null || !o.Visible) continue;
+                        if (o.Bounds.Contains(px, py)) { covered = true; break; }
+                    }
+                    if (covered) continue;
+                    int m = p.DebugMaxScroll();
+                    if (m > bestMax) { bestMax = m; best = p; }
+                }
             }
             if (best == null)
             {
@@ -7223,6 +7546,8 @@ partial class LauncherForm : Form
                + " dim=" + (dimPanel == null ? "нет" : (dimPanel.Visible ? "виден" : "скрыт"))
                + " kids=" + Controls.Count
                + " client=" + ClientSize.Width + "x" + ClientSize.Height
+               + " sc=" + (modsList == null ? "null" : modsList.ScrollY + "/" + modsList.DebugFlowTop
+                    + "/" + modsList.DebugFlowHeight + "/" + modsList.DebugFirstTop)
                + " probe=" + ProbePoint(1204, 196) + " / " + ProbePoint(1070, 160);
         }
         catch (Exception ex) { return "DIAG-ERR " + ex.Message; }
@@ -8152,6 +8477,51 @@ partial class LauncherForm : Form
     {
         if (InvokeRequired) { Invoke(new Action<int>(DebugShowView), v); return; }
         ShowView(v);
+    }
+
+    // Снимки: открыть выпадающий список (0 — версия в баннере,
+    // 1 — «Версия», 2 — «Загрузчик» в разделе модов).
+    public void DebugOpenDropdown(int idx)
+    {
+        if (InvokeRequired) { Invoke(new Action<int>(DebugOpenDropdown), idx); return; }
+        Dropdown d = idx == 0 ? cmbVer : idx == 1 ? modsTargetDd : idx == 2 ? modsLoaderDd : null;
+        try
+        {
+            if (Cfg.Dbg)
+                File.AppendAllText(Path.Combine(Cfg.BaseDir, "shot_args.txt"),
+                    "\r\nDD " + idx + " dropdown=" + (d == null ? "null" : d.Visible.ToString()) +
+                    " active=" + Form.ActiveForm, Encoding.UTF8);
+        }
+        catch { }
+        if (d != null)
+        {
+            d.DebugOpenPopup();
+            // Снимок отрисованного списка: в прогоне окно неактивно и
+            // PopupList закрывается по Deactivate, поэтому снимаем напрямую.
+            if (!Cfg.Dbg) return;
+            try
+            {
+                Form pf = null;
+                foreach (Form fm in Application.OpenForms) if (fm is PopupList) pf = fm;
+                if (pf == null) return;
+                pf.Refresh();
+                using (Bitmap b = new Bitmap(pf.Width, pf.Height))
+                {
+                    pf.DrawToBitmap(b, new Rectangle(0, 0, b.Width, b.Height));
+                    b.Save(Path.Combine(Cfg.BaseDir, "shot_popup.png"),
+                        System.Drawing.Imaging.ImageFormat.Png);
+                }
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    File.AppendAllText(Path.Combine(Cfg.BaseDir, "shot_args.txt"),
+                        "\r\nPOPUP-ERR " + ex.Message, Encoding.UTF8);
+                }
+                catch { }
+            }
+        }
     }
 
     public void RefreshTabs()
@@ -9954,6 +10324,11 @@ static class Program
                         // settings:N - открыть настройки на вкладке N (снимки)
                         try { LauncherForm.DbgSettingsTab = Convert.ToInt32(a.Substring(9)); } catch { }
                     }
+                    else if (a.StartsWith("dd:"))
+                    {
+                        // dd:N - открыть выпадающий список N (снимки)
+                        try { LauncherForm.DbgDropdown = Convert.ToInt32(a.Substring(3)); } catch { }
+                    }
                     else if (a.StartsWith("shotwait:"))
                     {
                         // shotwait:N - подождать N секунд перед снимком
@@ -10016,7 +10391,21 @@ static class Program
                 Size ssz = shotSize;
                 f.Shown += delegate
                 {
+                    try
+                    {
+                        File.AppendAllText(Path.Combine(Cfg.BaseDir, "shot_args.txt"),
+                            "\r\nSHOWN size=" + f.Size + " client=" + f.ClientSize +
+                            " state=" + f.WindowState + " bounds=" + f.Bounds, Encoding.UTF8);
+                    }
+                    catch { }
                     if (!ssz.IsEmpty) { try { f.Size = ssz; } catch { } }
+                    try
+                    {
+                        File.AppendAllText(Path.Combine(Cfg.BaseDir, "shot_args.txt"),
+                            "\r\nSIZED size=" + f.Size + " client=" + f.ClientSize +
+                            " state=" + f.WindowState + " bounds=" + f.Bounds, Encoding.UTF8);
+                    }
+                    catch { }
                     System.Windows.Forms.Timer t = new System.Windows.Forms.Timer();
                     t.Interval = 1200;
                     int ticks = 0;
@@ -10060,12 +10449,6 @@ static class Program
                             LauncherForm.DbgFriendsTab = -2;
                             try { f.DebugFriendsTab(ft); } catch { }
                         }
-                        if (LauncherForm.DbgScrollTo >= 0)
-                        {
-                            int target = LauncherForm.DbgScrollTo;
-                            LauncherForm.DbgScrollTo = -1;
-                            try { f.DebugScrollActive(target); } catch { }
-                        }
                         // a0 приветствие, a1 поздравление, a2 "понял",                        // a3 задание, a10 самолёт, a11 скример
                         bool artemStepArg = steps[0] < -100;
                         if (artemStepArg)
@@ -10103,6 +10486,12 @@ static class Program
                             int st2 = LauncherForm.DbgSettingsTab;
                             LauncherForm.DbgSettingsTab = -1;
                             try { f.DebugOpenSettings(st2); } catch { }
+                        }
+                        if (LauncherForm.DbgDropdown >= 0 && ticks >= 5)
+                        {
+                            int di = LauncherForm.DbgDropdown;
+                            LauncherForm.DbgDropdown = -1;
+                            try { f.DebugOpenDropdown(di); } catch { }
                         }
                         if (LauncherForm.DbgAiOpen)
                         {
@@ -10163,6 +10552,14 @@ static class Program
                             Application.DoEvents();
                             System.Threading.Thread.Sleep(700);
                             Application.DoEvents();
+                            try
+                            {
+                                File.AppendAllText(Path.Combine(Cfg.BaseDir, "shot_args.txt"),
+                                    "\r\nCAP size=" + f.Size + " client=" + f.ClientSize +
+                                    " state=" + f.WindowState + " bounds=" + f.Bounds +
+                                    " view=" + f.DebugGetView(), Encoding.UTF8);
+                            }
+                            catch { }
                             Rectangle scr = f.Bounds;
                             using (Bitmap bmp = new Bitmap(scr.Width, scr.Height))
                             {

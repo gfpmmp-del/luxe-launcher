@@ -59,6 +59,8 @@ partial class LauncherForm
     public static int DbgScrollTo = -1;
     // --shot-run ... settings:N - открыть настройки на вкладке N
     public static int DbgSettingsTab = -1;
+    // --shot-run ... dd:N - открыть выпадающий список N (снимки)
+    public static int DbgDropdown = -1;
     // --shot-run ... ai / ai:запрос - открыть помощника (и задать запрос)
     public static bool DbgAiOpen = false;
     public static string DbgAiQuery = null;

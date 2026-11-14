@@ -50,8 +50,6 @@ partial class LauncherForm
     const int WS_MINIMIZEBOX = 0x00020000;
     const int WS_MAXIMIZEBOX = 0x00010000;
 
-    [System.Runtime.InteropServices.DllImport("winmm.dll", EntryPoint = "timeBeginPeriod")]
-    static extern uint TimeBeginPeriod(uint uPeriod);
 
     const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
     const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
@@ -68,9 +66,6 @@ partial class LauncherForm
             // на Linux этих стилей нет — окно оформляет оконный менеджер
             if (Os.IsWin)
                 cp.Style |= WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
-            // WS_EX_COMPOSITED: двойная буферизация на уровне окна —
-            // убирает мерцание и дёрганье при скролле и перерисовке
-            cp.ExStyle |= 0x02000000;
             return cp;
         }
     }

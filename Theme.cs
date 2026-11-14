@@ -1941,7 +1941,8 @@ class HeroPanel : RoundedPanel
         t.Interval = 50;
         t.Tick += delegate
         {
-            if (IsDisposed || !IsHandleCreated || !Animate) return;
+            if (IsDisposed || !IsHandleCreated || !Animate || !Visible) return;
+            if (Anim.Scrolling) return;
             phase += 0.018f;
             Invalidate();
         };
