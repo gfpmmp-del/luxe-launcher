@@ -541,16 +541,24 @@ partial class LauncherForm
             socialTimer.Start();
         }
         catch { }
+        StartSignalTimer();
+        if (!LuxeAccounts.LoggedIn)
+        {
+            // Без аккаунта лаунчера друзей нет: не дёргаем сервис и
+            // сразу показываем приглашение войти/создать аккаунт.
+            SocialState();
+            try { FriendsRender(); } catch { }
+            return;
+        }
         // Пробуждаем сервис Render (он засыпает при простое): фоновый
         // пинг, чтобы первый запрос друзей не ждал 30-60 секунд
         Thread wake = new Thread((ThreadStart)delegate
         {
             try { Luxe.Init(); } catch { }
-            try { if (!Luxe.Ready) Luxe.Login(null, nick); } catch { }
+            try { if (!Luxe.Ready) Luxe.Login(null, LuxeAccounts.Nick); } catch { }
         });
         wake.IsBackground = true;
         wake.Start();
-        StartSignalTimer();
         SocialLogin();
     }
 
@@ -558,10 +566,17 @@ partial class LauncherForm
     void SocialLogin()
     {
         if (socialBusy) return;
+        if (!LuxeAccounts.LoggedIn)
+        {
+            socialBusy = false;
+            SocialState();
+            return;
+        }
         socialBusy = true;
         socialRelogin = false;
         SetStatus("Подключаюсь к сервису...", true);
-        string off = nick;
+        MascotLoading.Begin("Подключаюсь к сервису");
+        string off = LuxeAccounts.Nick;
         string token = null;
         try { if (Auth.LoggedIn) token = Auth.EnsureToken(); }
         catch { }
@@ -574,6 +589,7 @@ partial class LauncherForm
             {
                 socialBusy = false;
                 SocialState();
+                MascotLoading.End(ok ? "Сервис на связи" : "Сервис не ответил");
                 if (view == ViewFriends) FriendsLoad();
                 SignalTick();
                 // вход шёл со старым ником, а его уже поменяли — заходим заново
@@ -593,6 +609,12 @@ partial class LauncherForm
 
     void SocialTick()
     {
+        if (!LuxeAccounts.LoggedIn)
+        {
+            SocialState();
+            if (view == ViewFriends) FriendsRender();
+            return;
+        }
         if (!Luxe.Ready)
         {
             if (!socialBusy) SocialLogin();
@@ -629,7 +651,12 @@ partial class LauncherForm
         {
             string s;
             bool ok = true;
-            if (Luxe.Ready)
+            if (!LuxeAccounts.LoggedIn)
+            {
+                s = "Аккаунт лаунчера: вход не выполнен — друзья и плащи недоступны";
+                ok = false;
+            }
+            else if (Luxe.Ready)
             {
                 s = "Вы: " + Luxe.MyName + (Luxe.Offline ? " (без лицензии)" : "") +
                     " • сервис на связи";
@@ -673,7 +700,7 @@ partial class LauncherForm
         Controls.Add(head); friendsUi.Add(head);
 
         Label sub = new Label();
-        sub.Text = "Видно тех, кто держит лаунчер открытым. Новые друзья появляются только после принятия заявки";
+        sub.Text = "Друзья по нику аккаунта Luxe: видно тех, кто держит лаунчер открытым";
         sub.Font = Ui.Font(9.5f);
         sub.ForeColor = Ui.Gray;
         sub.BackColor = Ui.Bg;
@@ -857,6 +884,13 @@ partial class LauncherForm
     void FriendsLoad()
     {
         if (DbgSocialDemo) { FriendsRender(); return; }
+        if (!LuxeAccounts.LoggedIn)
+        {
+            friendsCache = null;
+            FriendsRender();
+            FriendState("Войди в аккаунт лаунчера, чтобы добавлять друзей", true);
+            return;
+        }
         if (friendsBusy) { friendsAgain = true; return; }
         if (!Luxe.Ready)
         {
@@ -866,6 +900,7 @@ partial class LauncherForm
         }
         friendsBusy = true;
         FriendState("Обновляю...", true);
+        MascotLoading.Begin("Загружаю друзей");
         Thread t = new Thread((ThreadStart)delegate
         {
             List<LuxeFriend> list = null;
@@ -879,6 +914,7 @@ partial class LauncherForm
                 if (list == null)
                 {
                     FriendState("Не получилось получить список: " + err, false);
+                    MascotLoading.Fail("Друзья не загрузились");
                     SocialState();
                     if (friendsAgain) { friendsAgain = false; FriendsLoad(); }
                     return;
@@ -886,6 +922,7 @@ partial class LauncherForm
                 friendsCache = list;
                 FriendsRender();
                 FriendsNote();
+                MascotLoading.End("Друзья загружены");
                 if (friendsAgain) { friendsAgain = false; FriendsLoad(); }
             });
         });
@@ -927,6 +964,14 @@ partial class LauncherForm
         int savedY = friendsList.ScrollY;
         bool keep = friendsList.Controls.Count > 0;
         friendsList.Controls.Clear();
+        if (!LuxeAccounts.LoggedIn)
+        {
+            friendsList.Controls.Add(FriendsGuestCard());
+            if (keep) friendsList.RestoreScroll(savedY);
+            else friendsList.ResetScroll();
+            FriendsNote();
+            return;
+        }
         if (friendsTab == 1) RequestsRender();
         else if (friendsTab == 2) TogetherRender();
         else FriendsRenderList();
@@ -937,6 +982,11 @@ partial class LauncherForm
 
     void FriendsRenderList()
     {
+        if (!LuxeAccounts.LoggedIn)
+        {
+            friendsList.Controls.Add(FriendsGuestCard());
+            return;
+        }
         if (friendsCache == null || friendsCache.Count == 0)
         {
             FriendsHint(friendsCache == null
@@ -945,6 +995,78 @@ partial class LauncherForm
             return;
         }
         foreach (LuxeFriend f in friendsCache) friendsList.Controls.Add(FriendRow(f));
+    }
+
+    // Приглашение создать аккаунт вместо пустого списка: маскот,
+    // объяснение и две кнопки — «Войти» и «Создать аккаунт».
+    RoundedPanel FriendsGuestCard()
+    {
+        RoundedPanel p = new RoundedPanel();
+        p.Radius = 16;
+        p.BackColor = Ui.Card;
+        p.Border = Color.FromArgb(80, Ui.Accent1);
+        p.Gradient = true;
+        p.GradFrom = Color.FromArgb(28, 34, 70);
+        p.GradTo = Color.FromArgb(10, 13, 30);
+        p.Size = new Size(RowWidth(friendsList), 238);
+        p.Margin = new Padding(0, 0, 0, 10);
+
+        MascotView m = new MascotView();
+        m.Location = new Point(24, 24);
+        m.Size = new Size(88, 88);
+        m.Walking = true;
+        p.Controls.Add(m);
+
+        Label t = new Label();
+        t.Text = "Друзья — по аккаунту Luxe";
+        t.Font = Ui.Font(13, FontStyle.Bold);
+        t.ForeColor = Ui.Txt;
+        t.BackColor = Color.Transparent;
+        t.AutoSize = false;
+        t.Location = new Point(132, 28);
+        t.Size = new Size(p.Width - 160, 26);
+        p.Controls.Add(t);
+
+        Label d = new Label();
+        d.Text = "Создай аккаунт лаунчера: ник 3–16 символов, пароль 4–16.\r\n"
+               + "Друзья, заявки и плащи привяжутся к этому нику — Minecraft-лицензия не нужна.";
+        d.Font = Ui.Font(8.8f);
+        d.ForeColor = Ui.Gray;
+        d.BackColor = Color.Transparent;
+        d.AutoSize = false;
+        d.Location = new Point(132, 58);
+        d.Size = new Size(p.Width - 160, 52);
+        p.Controls.Add(d);
+
+        RoundedButton login = new RoundedButton();
+        login.Text = "Войти";
+        login.Radius = 11;
+        login.Glow = true;
+        login.Font = Ui.Font(9.5f, FontStyle.Bold);
+        login.Location = new Point(132, 126);
+        login.Size = new Size(150, 42);
+        login.Click += delegate { ShowAccountCard(0); };
+        p.Controls.Add(login);
+
+        RoundedButton reg = RoundedButton.Dark("Создать аккаунт", 11);
+        reg.Font = Ui.Font(9.5f, FontStyle.Bold);
+        reg.ForeColor = Ui.Txt;
+        reg.Location = new Point(292, 126);
+        reg.Size = new Size(190, 42);
+        reg.Click += delegate { ShowAccountCard(1); };
+        p.Controls.Add(reg);
+
+        Label n = new Label();
+        n.Text = "Пароль хранится только на этом компьютере в виде хеша";
+        n.Font = Ui.Font(8);
+        n.ForeColor = Ui.GrayDim;
+        n.BackColor = Color.Transparent;
+        n.AutoSize = false;
+        n.Location = new Point(132, 180);
+        n.Size = new Size(p.Width - 160, 18);
+        p.Controls.Add(n);
+
+        return p;
     }
 
     void FriendsHint(string text)
@@ -1036,6 +1158,12 @@ partial class LauncherForm
 
     void FriendAdd()
     {
+        if (!LuxeAccounts.LoggedIn)
+        {
+            FriendState("Сначала войди в аккаунт лаунчера", false);
+            ShowAccountCard(0);
+            return;
+        }
         string n = friendBox == null ? "" : friendBox.Text.Trim();
         if (n.Length < 3 || n.Length > 16)
         {
@@ -1045,7 +1173,8 @@ partial class LauncherForm
         string me = SignalMe();
         if (me.Length == 0)
         {
-            FriendState("Сначала укажи ник на главной", false);
+            FriendState("Сначала войди в аккаунт лаунчера", false);
+            ShowAccountCard(0);
             return;
         }
         if (string.Equals(me, n, StringComparison.OrdinalIgnoreCase))
@@ -1061,6 +1190,7 @@ partial class LauncherForm
         string id = SocialStore.AddOut(n);
         friendBox.Text = "";
         FriendState("Отправляю заявку: " + n + "...", true);
+        MascotLoading.Begin("Отправляю заявку");
         Thread t = new Thread((ThreadStart)delegate
         {
             string err = "";
@@ -1072,8 +1202,13 @@ partial class LauncherForm
                 {
                     SocialStore.RemoveOutById(id);
                     FriendState("Не отправилось: " + err, false);
+                    MascotLoading.Fail("Заявка не отправилась");
                 }
-                else FriendState("Заявка отправлена: " + n + " — ждём ответа", true);
+                else
+                {
+                    FriendState("Заявка отправлена: " + n + " — ждём ответа", true);
+                    MascotLoading.End("Заявка отправлена");
+                }
                 FriendsRender();
             });
         });
@@ -1314,6 +1449,7 @@ partial class LauncherForm
         if (capesBusy) return;
         capesBusy = true;
         CapeState(force ? "Обновляю каталог..." : "Загружаю каталог...", true);
+        MascotLoading.Begin("Загружаю плащи");
         if (force) Luxe.DropImageCache();
         Thread t = new Thread((ThreadStart)delegate
         {
@@ -1333,11 +1469,13 @@ partial class LauncherForm
                 if (list == null)
                 {
                     CapeState("Каталог не загрузился: " + err, false);
+                    MascotLoading.Fail("Плащи не загрузились");
                     return;
                 }
                 capesCache = list;
                 capesCurrent = cur;
                 CapesRender(force);
+                MascotLoading.End("Плащи загружены");
             });
         });
         t.IsBackground = true;

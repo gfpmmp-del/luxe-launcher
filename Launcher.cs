@@ -21,6 +21,8 @@ static class Cfg
 {
     // включается только отладочными прогонами (--shot-run/--shot-test)
     public static bool Dbg = false;
+    // снимок плашки маскота: toast:N — показать «Загрузка» с N процентами
+    public static int DbgToast = -1;
     public static string BaseDir;
     public static string DataDir;
     public static string McDir;
@@ -29,7 +31,7 @@ static class Cfg
     public const string ManifestUrl = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
     public const string JavaJreUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse";
     public const string JavaJdkUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse";
-    public const string AppVersion = "3.1.0";
+    public const string AppVersion = "4.0.0";
 #if ARTYOM
     // Подарочный билд для Артёма: собирается ключом /define:ARTYOM
     public const bool GiftBuild = true;
@@ -2601,10 +2603,34 @@ static partial class Ui
         {
             Control p = c == null ? null : c.Parent;
             if (p == null) return Color.Empty;
-            // родитель с собственным артом: баннер, обложки, аватары
+            // Родитель с градиентом: сплошную подложку брать нельзя, но
+            // прозрачные углы кнопки иначе остаются с «залипшими»
+            // пикселями прошлой отрисовки (буфер контролов общего
+            // размера). Считаем цвет градиента точно в точке кнопки:
+            // скругление маленькое, а градиент по краям почти ровный.
             RoundedPanel rp = p as RoundedPanel;
-            if (rp != null && (rp.Gradient || rp.ContentImage != null || rp.Deco != null))
-                return Color.Empty;
+            if (rp != null)
+            {
+                if (!rp.Gradient || rp.ContentImage != null || rp.Deco != null)
+                    return Color.Empty;
+                Rectangle cr = rp.ClientRectangle;
+                int pad = rp.Pad;
+                Rectangle gr = new Rectangle(pad, pad,
+                    Math.Max(1, cr.Width - pad * 2), Math.Max(1, cr.Height - pad * 2));
+                float px = c.Left + c.Width * 0.5f;
+                float py = c.Top + c.Height * 0.5f;
+                double ang = rp.GradAngle * Math.PI / 180.0;
+                double dx = Math.Cos(ang), dy = Math.Sin(ang);
+                float cx = gr.X + gr.Width * 0.5f;
+                float cy = gr.Y + gr.Height * 0.5f;
+                double span = Math.Abs(gr.Width * dx) + Math.Abs(gr.Height * dy);
+                if (span < 1.0) return Color.Empty;
+                double proj = ((px - cx) * dx + (py - cy) * dy) / span;
+                float t = (float)(0.5 + proj);
+                if (t < 0f) t = 0f;
+                if (t > 1f) t = 1f;
+                return Lerp(rp.GradFrom, rp.GradTo, t);
+            }
             if (p.GetType().Name == "HeroPanel") return Color.Empty;
             Color b = p.BackColor;
             if (b.A < 250) return Color.Empty;
@@ -5206,6 +5232,14 @@ static class NewsData
 {
     public static readonly NewsItem[] All = new NewsItem[]
     {
+        new NewsItem { ver = "4.0.0", title = "Стеклянный интерфейс, аккаунты Luxe и маскот", lines = new string[] {
+            "Новый стеклянный стиль: аврора в сайдбаре, градиентные карточки и мягкие блики",
+            "Аккаунты лаунчера: вход и регистрация по нику (3–16) и паролю (4–16)",
+            "Пароль не хранится в открытом виде — только соль и хеш PBKDF2 на этом компьютере",
+            "«Друзья» теперь по нику аккаунта Luxe — лицензия Microsoft для них не нужна",
+            "Маскот Люкс ходит во время загрузок: версии, моды, Java, плащи, друзья и обновления",
+            "Починено автообновление: кириллица в пути больше не ломает замену exe",
+            "Карточка обновления показывает маскота, полосу прогресса и проценты" } },
         new NewsItem { ver = "2.2.4", title = "Ровное окно, прогресс загрузок и мод для 26.3", lines = new string[] {
             "Убраны белые рамки и полосы по краям окна при развороте, растягивании и возврате из свёрнутого",
             "Скачивание модов, Java и обновления показывает проценты и мегабайты в полосе прогресса",
@@ -5361,6 +5395,10 @@ partial class LauncherForm : Form
     Label updateNotes;
     RoundedButton btnUpdateGo;
     RoundedButton btnUpdateLater;
+    MascotView updMascot;
+    LoadBar updBar;
+    Label updPct;
+    MascotToast mascotToast;
     // вкладка «Обновления» в настройках: строка результата проверки,
     // чтобы «у вас уже последняя версия» было видно прямо на вкладке,
     // а не только в нижней строке статуса (она перекрыта карточкой)
@@ -6142,85 +6180,7 @@ partial class LauncherForm : Form
         int cardW = 400;
         int cardX = (W - cardW) / 2;
 
-        accCard = new RoundedPanel();
-        accCard.Radius = 16;
-        accCard.BackColor = Ui.Surface;
-        accCard.Border = Ui.Line;
-        accCard.Location = new Point(cardX, (H - 344) / 2);
-        accCard.Size = new Size(cardW, 344);
-        accCard.Visible = false;
-        Controls.Add(accCard);
-        CardHead(accCard, "Аккаунты", cardW, delegate { HideOverlays(); });
-        Label accHint = new Label();
-        accHint.Text = "Ник (3-16: a-z, 0-9, _)";
-        accHint.Font = Ui.Font(9);
-        accHint.ForeColor = Ui.GrayDim;
-        accHint.BackColor = Color.Transparent;
-        accHint.AutoSize = false;
-        accHint.Location = new Point(24, 66);
-        accHint.Size = new Size(cardW - 48, 18);
-        accCard.Controls.Add(accHint);
-        accNick = new TextBox();
-        accNick.Font = Ui.Font(11);
-        accNick.BackColor = Ui.SurfaceHi;
-        accNick.ForeColor = Ui.Txt;
-        accNick.BorderStyle = BorderStyle.None;
-        accNick.Location = new Point(12, 9);
-        accNick.Size = new Size(cardW - 48 - 24, 22);
-        RoundedPanel nickBox = FieldBox(cardW - 48, 40, 88);
-        nickBox.Controls.Add(accNick);
-        accCard.Controls.Add(nickBox);
-        RoundedButton accSave = new RoundedButton();
-        accSave.Text = "Сохранить";
-        accSave.Radius = 12;
-        accSave.Font = Ui.Font(10, FontStyle.Bold);
-        accSave.Location = new Point(24, 148);
-        accSave.Size = new Size(cardW / 2 - 30, 44);
-        accSave.Click += delegate { SaveAccount(); };
-        accCard.Controls.Add(accSave);
-        RoundedButton accCancel = RoundedButton.Dark("Отмена", 12);
-        accCancel.Font = Ui.Font(10, FontStyle.Bold);
-        accCancel.ForeColor = Ui.Txt;
-        accCancel.Location = new Point(cardW / 2 + 6, 148);
-        accCancel.Size = new Size(cardW / 2 - 30, 44);
-        accCancel.Click += delegate { HideOverlays(); };
-        accCard.Controls.Add(accCancel);
-
-        // ===== Лицензия Microsoft (Auth.cs) =====
-        // Поле ника выше никуда не девается: без входа игра запускается
-        // как раньше — офлайн, с токеном "0"
-        Panel licLine = new Panel();
-        licLine.BackColor = Ui.Line;
-        licLine.Location = new Point(24, 206);
-        licLine.Size = new Size(cardW - 48, 1);
-        accCard.Controls.Add(licLine);
-
-        Label licHead = new Label();
-        licHead.Text = "Лицензия Microsoft";
-        licHead.Font = Ui.Font(9);
-        licHead.ForeColor = Ui.GrayDim;
-        licHead.BackColor = Color.Transparent;
-        licHead.AutoSize = false;
-        licHead.Location = new Point(24, 218);
-        licHead.Size = new Size(cardW - 48, 18);
-        accCard.Controls.Add(licHead);
-
-        accLic = new Label();
-        accLic.Font = Ui.Font(10.5f, FontStyle.Bold);
-        accLic.ForeColor = Ui.GrayDim;
-        accLic.BackColor = Color.Transparent;
-        accLic.AutoSize = false;
-        accLic.Location = new Point(24, 238);
-        accLic.Size = new Size(cardW - 48, 22);
-        accCard.Controls.Add(accLic);
-
-        accLicBtn = new RoundedButton();
-        accLicBtn.Radius = 12;
-        accLicBtn.Font = Ui.Font(10, FontStyle.Bold);
-        accLicBtn.Location = new Point(24, 268);
-        accLicBtn.Size = new Size(cardW - 48, 42);
-        accLicBtn.Click += delegate { ShowAuth(); };
-        accCard.Controls.Add(accLicBtn);
+        BuildAccountCard(cardW);
 
         // ===== Карточка входа: код и ссылка на Microsoft =====
         authCard = new RoundedPanel();
@@ -6273,16 +6233,21 @@ partial class LauncherForm : Form
         BuildSettingsTabs();
 
         updateCard = new RoundedPanel();
-        updateCard.Radius = 16;
+        updateCard.Radius = 18;
         updateCard.BackColor = Ui.Surface;
-        updateCard.Border = Ui.Accent1;
+        updateCard.Border = Color.FromArgb(120, Ui.Accent1);
         updateCard.Gradient = true;
-        updateCard.GradFrom = Color.FromArgb(32, 28, 52);
-        updateCard.GradTo = Ui.Surface;
-        updateCard.Location = new Point(cardX, (H - 320) / 2);
-        updateCard.Size = new Size(cardW, 320);
+        updateCard.GradFrom = Color.FromArgb(30, 36, 72);
+        updateCard.GradTo = Color.FromArgb(9, 12, 28);
+        updateCard.Location = new Point(cardX, (H - 330) / 2);
+        updateCard.Size = new Size(cardW, 330);
         updateCard.Visible = false;
         Controls.Add(updateCard);
+        updMascot = new MascotView();
+        updMascot.Location = new Point(22, 62);
+        updMascot.Size = new Size(72, 72);
+        updMascot.Walking = false;
+        updateCard.Controls.Add(updMascot);
         updateTitle = new Label();
         updateTitle.Text = "Доступно обновление";
         updateTitle.Font = Ui.Font(13, FontStyle.Bold);
@@ -6297,22 +6262,37 @@ partial class LauncherForm : Form
         updateNotes.ForeColor = Ui.Gray;
         updateNotes.BackColor = Color.Transparent;
         updateNotes.AutoSize = false;
-        updateNotes.Location = new Point(24, 56);
-        updateNotes.Size = new Size(cardW - 48, 130);
+        updateNotes.Location = new Point(106, 58);
+        updateNotes.Size = new Size(cardW - 130, 106);
         updateCard.Controls.Add(updateNotes);
+        updBar = new LoadBar();
+        updBar.Location = new Point(24, 176);
+        updBar.Size = new Size(cardW - 48, 8);
+        updateCard.Controls.Add(updBar);
+        updPct = new Label();
+        updPct.Text = "";
+        updPct.Font = Ui.Font(8.5f, FontStyle.Bold);
+        updPct.ForeColor = Ui.Accent1;
+        updPct.BackColor = Color.Transparent;
+        updPct.AutoSize = false;
+        updPct.TextAlign = ContentAlignment.MiddleRight;
+        updPct.Location = new Point(cardW - 120, 188);
+        updPct.Size = new Size(96, 18);
+        updateCard.Controls.Add(updPct);
         btnUpdateGo = new RoundedButton();
         btnUpdateGo.Text = "Обновить и перезапустить";
         btnUpdateGo.Radius = 12;
+        btnUpdateGo.Glow = true;
         btnUpdateGo.Font = Ui.Font(10, FontStyle.Bold);
         btnUpdateGo.FitText = true;
-        btnUpdateGo.Location = new Point(24, 196);
+        btnUpdateGo.Location = new Point(24, 212);
         btnUpdateGo.Size = new Size(cardW - 48, 46);
         btnUpdateGo.Click += delegate { DownloadAndApply(); };
         updateCard.Controls.Add(btnUpdateGo);
         btnUpdateLater = RoundedButton.Dark("Позже", 12);
         btnUpdateLater.Font = Ui.Font(9, FontStyle.Bold);
         btnUpdateLater.ForeColor = Ui.Txt;
-        btnUpdateLater.Location = new Point(24, 252);
+        btnUpdateLater.Location = new Point(24, 266);
         btnUpdateLater.Size = new Size(cardW - 48, 40);
         btnUpdateLater.Click += delegate { HideOverlays(); };
         updateCard.Controls.Add(btnUpdateLater);
@@ -6321,6 +6301,11 @@ partial class LauncherForm : Form
         ChromeGrips();
         BuildSectionViews();
         LayoutSections();
+        // Плашка загрузки поверх всего: её поднимаем после ApplyView,
+        // чтобы маскот был виден и над карточками, и над оверлеями.
+        mascotToast = new MascotToast();
+        mascotToast.Attach(this);
+        mascotToast.BringToFront();
         // Подарочный билд для Артёма: экран приветствия поверх лаунчера
         try { if (Cfg.GiftBuild) BuildArtem(); } catch { }
 
@@ -6640,6 +6625,7 @@ partial class LauncherForm : Form
                 banner.Animate = (view == ViewHome) && (WindowState != FormWindowState.Minimized);        }
         catch { }
         try { LayoutSections(); } catch { }
+        try { PlaceAccountCard(); } catch { }
         // витрина главного экрана: панели переставляем сразу,
         // содержимое карточек — после паузы (см. QueueHomeRebuild)
         try
@@ -7028,6 +7014,8 @@ partial class LauncherForm : Form
             if (view == ViewFriends && friendsUi != null) { for (int i = 1; i < friendsUi.Count; i++) friendsUi[i].BringToFront(); }
             if (view == ViewCapes && capesUi != null) { for (int i = 1; i < capesUi.Count; i++) capesUi[i].BringToFront(); }
             ChromeTop();
+            // плашка загрузки — поверх всех слоёв, включая карточки-оверлеи
+            try { if (mascotToast != null && mascotToast.Visible) mascotToast.BringToFront(); } catch { }
             Dbg("AV view=" + view + " kids=" + Controls.Count + " news=" + newsUi.Count + " mods=" + modsUi.Count);
         }
         catch (Exception ex)
@@ -7064,17 +7052,6 @@ partial class LauncherForm : Form
     void OnSettings(object s, EventArgs e)
     {
         ShowSettings();
-    }
-
-    void ShowAccount()
-    {
-        accNick.Text = nick;
-        UpdateLicUi();
-        dimPanel.Visible = true;
-        dimPanel.BringToFront();
-        accCard.Visible = true;
-        accCard.BringToFront();
-        accNick.Focus();
     }
 
     // Строка лицензии на карточке аккаунта
@@ -7125,6 +7102,8 @@ partial class LauncherForm : Form
         dimPanel.BringToFront();
         authCard.Visible = true;
         authCard.BringToFront();
+        MascotLoading.Begin("Вход в Microsoft");
+        try { if (mascotToast != null) mascotToast.BringToFront(); } catch { }
 
         Auth.LoginAsync(
             delegate(string s) { Ui_(delegate { authStep.Text = s; }); },
@@ -7148,6 +7127,7 @@ partial class LauncherForm : Form
                         UpdateLicUi();
                         RefreshProfile();
                         SetStatus(msg, true);
+                        MascotLoading.End("Вход выполнен");
                         // сервису тоже нужен новый вход: с лицензией меняется uuid
                         try { SocialRelogin(); } catch { }
                         // скины и плащи подтягиваются отдельно — их видно в разделе скина
@@ -7161,6 +7141,7 @@ partial class LauncherForm : Form
                         authStep.Text = msg;
                         authCode.Text = "";
                         SetStatus(msg, false);
+                        MascotLoading.Fail(msg);
                     }
                 });
             });
@@ -7186,12 +7167,6 @@ partial class LauncherForm : Form
         if (aiSetup != null) aiSetup.Visible = false;
         updateCard.Visible = false;
         dimPanel.Visible = false;
-    }
-
-    void SaveAccount()
-    {
-        if (!ApplyNickname(accNick.Text)) return;
-        HideOverlays();
     }
 
     // Одна точка смены ника: и карточка «Аккаунт», и вкладка настроек.
@@ -7230,6 +7205,7 @@ partial class LauncherForm : Form
                 }
                 return;
             }
+            MascotLoading.Begin("Проверяю обновления");
             string url = Cfg.UpdateUrl();
             HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
             req.Timeout = 12000;
@@ -7287,6 +7263,7 @@ partial class LauncherForm : Form
         finally
         {
             // кнопка возвращается в строй при любом исходе проверки
+            MascotLoading.End("Проверка обновлений завершена");
             if (manual) UpdBusy(false);
         }
     }
@@ -7305,6 +7282,9 @@ partial class LauncherForm : Form
         updateNotes.Text = string.IsNullOrEmpty(notes) ? ("Текущая версия: " + Cfg.AppVersion) : notes;
         btnUpdateLater.Visible = !mand;
         btnUpdateGo.Enabled = true;
+        if (updBar != null) { updBar.Value = 0; updBar.SetMode(false); }
+        if (updPct != null) { updPct.Text = ""; updPct.ForeColor = Ui.Accent1; }
+        if (updMascot != null) { updMascot.Walking = false; updMascot.Happy = false; }
         dimPanel.Visible = true;
         dimPanel.BringToFront();
         updateCard.Visible = true;
@@ -7314,6 +7294,13 @@ partial class LauncherForm : Form
     void DownloadAndApply()
     {
         btnUpdateGo.Enabled = false;
+        MascotLoading.Begin("Скачиваю обновление " + updVer);
+        Ui_(delegate
+        {
+            if (updMascot != null) { updMascot.Walking = true; updMascot.Happy = false; }
+            if (updBar != null) { updBar.Value = 0; updBar.SetMode(true); }
+            if (updPct != null) { updPct.Text = "0%"; updPct.ForeColor = Ui.Accent1; }
+        });
         Thread t = new Thread((ThreadStart)delegate
         {
             try
@@ -7337,26 +7324,32 @@ partial class LauncherForm : Form
                         throw new Exception("файл обновления битый (скачалось " + (fi.Exists ? fi.Length.ToString() : "0") + " из " + updSize + ")");
                     Thread.Sleep(1500);
                 }
-                StringBuilder bb = new StringBuilder();
-                bb.AppendLine("@echo off");
-                bb.AppendLine("timeout /t 3 /nobreak >nul");
-                bb.AppendLine(":retry");
-                // АБСОЛЮТНЫЕ пути: раньше были относительные, .bat работал
-                // в папке данных — новый exe лёг рядом с данными, а
-                // настоящий файл не заменялся.
-                bb.AppendLine("move /Y \"" + newPath + "\" \"" + exePath + "\" >nul 2>&1");
-                bb.AppendLine("if errorlevel 1 ( timeout /t 2 /nobreak >nul & goto retry )");
-                bb.AppendLine("start \"\" \"" + exePath + "\"");
-                bb.AppendLine("(goto) 2>nul & del \"%~f0\"");
+                // Батник больше не пишем: кириллический путь в
+                // %APPDATA% превращался в «?????», и move не находил
+                // файл. Os.StartApplyScript запускает PowerShell с
+                // Unicode-командой и ждёт завершения текущего процесса.
                 SetStatus("Обновление скачано, перезапускаюсь...", true);
+                Ui_(delegate
+                {
+                    if (updBar != null) { updBar.SetMode(false); updBar.Value = 100; }
+                    if (updPct != null) updPct.Text = "100%";
+                    if (updMascot != null) { updMascot.Walking = false; updMascot.Happy = true; }
+                });
+                MascotLoading.End("Обновление скачано");
                 Os.StartApplyScript(newPath, exePath, Cfg.DataDir);
-                Thread.Sleep(800);
+                Thread.Sleep(900);
                 if (InvokeRequired) Invoke(new Action(delegate { Application.Exit(); }));
                 else Application.Exit();
             }
             catch (Exception ex)
             {
                 ShowError("Не обновилось: " + ex.Message);
+                MascotLoading.Fail("Обновление не скачалось");
+                Ui_(delegate
+                {
+                    if (updMascot != null) { updMascot.Walking = false; updMascot.Happy = false; }
+                    if (updBar != null) updBar.SetMode(false);
+                });
                 try
                 {
                     if (btnUpdateGo.InvokeRequired)
@@ -8305,11 +8298,29 @@ partial class LauncherForm : Form
 
     void RefreshProfile()
     {
-        // с лицензией показываем настоящий ник аккаунта, иначе выбранный офлайн
-        string shown = (Auth.LoggedIn && Auth.Name.Length > 0) ? Auth.Name : nick;
-        lblProfileNick.Text = shown;
+        // Аккаунт лаунчера — главная личность: его ник видят друзья.
+        // Без аккаунта показываем офлайн-ник, с которым играем.
+        string shown;
+        if (LuxeAccounts.LoggedIn) shown = LuxeAccounts.Nick;
+        else if (Auth.LoggedIn && Auth.Name.Length > 0) shown = Auth.Name;
+        else shown = nick;
+        lblProfileNick.Text = string.IsNullOrEmpty(shown) ? "Войти в аккаунт" : shown;
         bool premium = Auth.LoggedIn;
-        lblProfileSub.Text = premium ? "Premium" : "Luxe Launcher";
+        if (LuxeAccounts.LoggedIn)
+        {
+            lblProfileSub.Text = "Аккаунт лаунчера";
+            lblProfileSub.ForeColor = Ui.Accent1;
+        }
+        else if (premium)
+        {
+            lblProfileSub.Text = "Premium";
+            lblProfileSub.ForeColor = Ui.Gold;
+        }
+        else
+        {
+            lblProfileSub.Text = "Войти в аккаунт";
+            lblProfileSub.ForeColor = Ui.Gold;
+        }
         if (profileCrown != null) profileCrown.Visible = premium;
     }
 
@@ -8579,6 +8590,9 @@ partial class LauncherForm : Form
                 if (v > m) v = m;
                 if (v < 0) v = 0;
                 bar.Value = v;
+                // та же полоса кормит маскота: он виден и при установке
+                // версий, где скачивание идёт шагами, а не одним файлом
+                MascotLoading.Progress((int)((long)v * 100 / m), null);
             }
         }
         catch { }
@@ -8598,14 +8612,25 @@ partial class LauncherForm : Form
                 BeginInvoke(new Action<long, long, string>(OnDownloadProgress), got, total, label);
                 return;
             }
-            if (got < 0) { SetProg(0, 100); return; }
+            if (got < 0)
+            {
+                SetProg(0, 100);
+                MascotLoading.End("Загрузка завершена");
+                return;
+            }
             int pct = total > 0 ? (int)(got * 100 / total) : 0;
             SetProg(pct, 100);
             string mb = (got / 1048576.0).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
             string all = total > 0
                 ? mb + " из " + (total / 1048576.0).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " МБ"
                 : mb + " МБ";
-            SetStatus((string.IsNullOrEmpty(label) ? "Загрузка" : label) + ": " + pct + "%  (" + all + ")", true);
+            string name = string.IsNullOrEmpty(label) ? "Загрузка" : label;
+            SetStatus(name + ": " + pct + "%  (" + all + ")", true);
+            MascotLoading.Progress(pct, name + " • " + all);            if (updateCard != null && updateCard.Visible)
+            {
+                if (updBar != null) { updBar.SetMode(false); updBar.Value = pct; }
+                if (updPct != null) updPct.Text = pct + "%  •  " + all;
+            }
         }
         catch { }
     }
@@ -9035,12 +9060,15 @@ partial class LauncherForm : Form
         string target = modsTarget, mcv = modsMcVer, loader = modsLoader, mdir = modsDir;
         SetStatus(q == "" ? "Загружаю популярные моды с Modrinth..." : "Ищу «" + q + "» на Modrinth...", true);
         ShowModsHint(q);
+        MascotLoading.Begin(q == "" ? "Загружаю моды" : "Ищу моды");
         Thread t = new Thread((ThreadStart)delegate
         {
+            bool ok = false;
             try
             {
                 List<ModInfo> found = Modrinth.Search(q, mcv, loader, 40);
                 if (IsDisposed) return;
+                ok = true;
                 if (InvokeRequired) Invoke(new Action(delegate { ApplyMods(found, q, gen, target, mdir); }));
                 else ApplyMods(found, q, gen, target, mdir);
             }
@@ -9053,6 +9081,11 @@ partial class LauncherForm : Form
                     else SetStatus("Modrinth: " + ex.Message, false);
                 }
                 catch { }
+            }
+            finally
+            {
+                if (ok) MascotLoading.End("Моды готовы");
+                else MascotLoading.Fail("Моды не загрузились");
             }
         });
         t.IsBackground = true;
@@ -9294,6 +9327,7 @@ partial class LauncherForm : Form
         try { SetProg(0, 100); } catch { }
         string mcv = modsMcVer, loader = modsLoader, mdir = modsDir;
         string title = m.title;
+        MascotLoading.Begin("Устанавливаю " + Ui.Short(title, 26));
         Thread t = new Thread((ThreadStart)delegate
         {
             int steps = 0;
@@ -9305,6 +9339,7 @@ partial class LauncherForm : Form
                     steps++;
                     SetProg(steps, steps + 2);
                     SetStatus(s, true);
+                    MascotLoading.Progress(-1, s);
                 });
                 string msg = "✓ " + Ui.Short(title, 40) + " установлен";
                 if (job.installed > 1) msg += " (+" + (job.installed - 1) + " доп.)";
@@ -9314,8 +9349,9 @@ partial class LauncherForm : Form
                     SetStatus(msg, false);
                 }
                 else SetStatus(msg, true);
+                MascotLoading.End("Мод установлен");
             }
-            catch (Exception ex) { ShowError(ex.Message); }
+            catch (Exception ex) { ShowError(ex.Message); MascotLoading.Fail("Мод не установился"); }
             finally
             {
                 busyDl = false;
@@ -9686,6 +9722,7 @@ partial class LauncherForm : Form
         }
         busyDl = true;
         SetStatus("Качаю " + v + "...", true);
+        MascotLoading.Begin("Устанавливаю " + v);
         Thread t = new Thread((ThreadStart)delegate
         {
             try
@@ -9696,12 +9733,14 @@ partial class LauncherForm : Form
                 string kind = Mc.KindOf(v);
                 InstallResult rr = Mc.PrepareLaunch(v, SetStatus, SetProg);
                 SetStatus(rr.Id + " установлена!", true);
+                MascotLoading.End(rr.Id + " готова");
                 LoadVersions();
                 SelectVersion(rr.Id);
             }
             catch (Exception ex)
             {
                 ShowError(ex.Message);
+                MascotLoading.Fail("Установка " + v + " не удалась");
             }
             finally
             {
@@ -10110,6 +10149,85 @@ static class Program
         Mc.ExtractEmbeddedAssets();
         // вход в Microsoft: clientid.txt и account.json рядом с лаунчером
         try { Auth.Init(); } catch { }
+        // локальные аккаунты лаунчера: друзья, плащи и профиль
+        try { LuxeAccounts.Init(); } catch { }
+
+        // ---------- автотесты хранилищ (не трогают реальные данные) ----------
+        //   LuxeLauncher.exe --acc-test   — регистрация/вход/валидация
+        if (args.Length > 0 && args[0] == "--acc-test")
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "luxe_acc_test");
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
+            try { Directory.CreateDirectory(dir); } catch { }
+            Cfg.DataDir = dir;
+            Cfg.ConfigPath = Path.Combine(dir, "config.json");
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("dir=" + dir);
+            string err = "";
+            sb.AppendLine("ник 2 симв. валиден=" + LuxeAccounts.ValidNick("ab"));
+            sb.AppendLine("ник с дефисом валиден=" + LuxeAccounts.ValidNick("ab-c"));
+            sb.AppendLine("ник ok валиден=" + LuxeAccounts.ValidNick("tester_1"));
+            sb.AppendLine("пароль 3 валиден=" + LuxeAccounts.ValidPass("abc"));
+            bool r1 = LuxeAccounts.Register("tester_1", "pass1234", out err);
+            sb.AppendLine("register=" + r1 + " err='" + err + "' logged=" + LuxeAccounts.LoggedIn
+                          + " nick=" + LuxeAccounts.Nick);
+            sb.AppendLine("файл accounts.json=" + File.Exists(Path.Combine(dir, "accounts.json")));
+            sb.AppendLine("файл session.txt=" + File.Exists(Path.Combine(dir, "session.txt")));
+            sb.AppendLine("пароль в файле?=" + (File.ReadAllText(Path.Combine(dir, "accounts.json"))
+                          .IndexOf("pass1234", StringComparison.Ordinal) >= 0));
+            bool dup = LuxeAccounts.Register("tester_1", "pass1234", out err);
+            sb.AppendLine("повторная регистрация=" + dup + " err='" + err + "'");
+            LuxeAccounts.Logout();
+            sb.AppendLine("после выхода logged=" + LuxeAccounts.LoggedIn
+                          + " session=" + File.Exists(Path.Combine(dir, "session.txt")));
+            bool bad = LuxeAccounts.Login("tester_1", "wrongpass", out err);
+            sb.AppendLine("вход с неверным паролем=" + bad + " err='" + err + "'");
+            // сессия: Init читает session.txt после успешного входа
+            LuxeAccounts.Login("tester_1", "pass1234", out err);
+            LuxeAccounts.Logout();
+            File.WriteAllText(Path.Combine(dir, "session.txt"), "tester_1", new UTF8Encoding(false));
+            LuxeAccounts.Init();
+            sb.AppendLine("сессия восстановлена nick=" + LuxeAccounts.Nick);
+            File.WriteAllText(Path.Combine(Cfg.BaseDir, "acc_test.txt"), sb.ToString(), Encoding.UTF8);
+            return;
+        }
+
+        // сид/очистка демо-аккаунта для снимков (потом удаляются)
+        if (args.Length > 0 && args[0] == "--acc-seed")
+        {
+            string err = "";
+            bool ok = LuxeAccounts.Register("luxe_demo", "demo1234", out err);
+            File.WriteAllText(Path.Combine(Cfg.BaseDir, "acc_seed.txt"),
+                "ok=" + ok + " err='" + err + "' nick=" + LuxeAccounts.Nick, Encoding.UTF8);
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--acc-wipe")
+        {
+            try { File.Delete(Path.Combine(Cfg.DataDir, "accounts.json")); } catch { }
+            try { File.Delete(Path.Combine(Cfg.DataDir, "session.txt")); } catch { }
+            return;
+        }
+
+        if (args.Length > 0 && args[0] == "--upd-test")
+        {
+            string log = Cfg.LogPath("update_apply.log");
+            try { if (File.Exists(log)) File.Delete(log); } catch { }
+            // кириллица в пути специально: BaseDir = «...\Новая папка»
+            string dir = Path.Combine(Cfg.BaseDir, "upd_test");
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
+            try { Directory.CreateDirectory(dir); } catch { }
+            string newPath = Path.Combine(dir, "new.exe");
+            string dst = Path.Combine(dir, "target.dat");
+            try { File.Copy(Application.ExecutablePath, newPath, true); } catch { }
+            try { File.WriteAllText(dst, "old", Encoding.UTF8); } catch { }
+            Os.StartApplyScript(newPath, dst, dir);
+            // Скрипт ждёт выхода текущего процесса: сами копию не увидим,
+            // поэтому ждём снаружи (см. проверку upd_test.txt после выхода).
+            File.WriteAllText(Path.Combine(Cfg.BaseDir, "upd_test.txt"),
+                "before=" + new FileInfo(dst).Length + " new=" + new FileInfo(newPath).Length,
+                Encoding.UTF8);
+            return;
+        }
 
         // скрытая проверка раздачи мода плащей (для отладки):
         //   LuxeLauncher.exe --cape-mod-check 1.21.8 <папка-игры>
@@ -10329,6 +10447,16 @@ static class Program
                         // dd:N - открыть выпадающий список N (снимки)
                         try { LauncherForm.DbgDropdown = Convert.ToInt32(a.Substring(3)); } catch { }
                     }
+                    else if (a.StartsWith("acc:"))
+                    {
+                        // acc:N - открыть карточку аккаунта (снимки)
+                        try { LauncherForm.DbgAccount = Convert.ToInt32(a.Substring(4)); } catch { }
+                    }
+                    else if (a.StartsWith("toast:"))
+                    {
+                        // toast:N - показать плашку «Загрузка» с N процентами
+                        try { Cfg.DbgToast = Convert.ToInt32(a.Substring(6)); } catch { }
+                    }
                     else if (a.StartsWith("shotwait:"))
                     {
                         // shotwait:N - подождать N секунд перед снимком
@@ -10481,6 +10609,23 @@ static class Program
                             catch { }
                         }
                         // при отладке отправки скина даём потоку время ответить
+                        if (LauncherForm.DbgAccount >= 0 && ticks >= 3)
+                        {
+                            int am = LauncherForm.DbgAccount;
+                            LauncherForm.DbgAccount = -1;
+                            try { f.DebugOpenAccount(am); } catch { }
+                        }
+                        if (Cfg.DbgToast >= 0 && ticks >= 2)
+                        {
+                            int tp = Cfg.DbgToast;
+                            Cfg.DbgToast = -1;
+                            try
+                            {
+                                MascotLoading.Begin("Скачиваю обновление");
+                                MascotLoading.Progress(tp, "Luxe Launcher 4.0.0 • 12.4 из 26.9 МБ");
+                            }
+                            catch { }
+                        }
                         if (LauncherForm.DbgSettingsTab >= 0)
                         {
                             int st2 = LauncherForm.DbgSettingsTab;

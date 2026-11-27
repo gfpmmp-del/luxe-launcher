@@ -1069,10 +1069,11 @@ partial class LauncherForm
         {
             bool rq = friendsTab == 1;
             bool pl = friendsTab == 2;
-            if (friendsAddBox != null) friendsAddBox.Visible = !rq;
+            bool guest = !LuxeAccounts.LoggedIn;
+            if (friendsAddBox != null) friendsAddBox.Visible = !rq && !guest;
             if (friendAddBtn != null)
             {
-                friendAddBtn.Visible = !rq;
+                friendAddBtn.Visible = !rq && !guest;
                 string t = pl ? "Подключиться" : "Добавить";
                 if (friendAddBtn.Text != t)
                 {
@@ -1114,6 +1115,12 @@ partial class LauncherForm
     {
         try
         {
+            if (!LuxeAccounts.LoggedIn)
+            {
+                FriendState("Друзья и заявки доступны после входа в аккаунт лаунчера", true);
+                FriendsBadge(0, 0);
+                return;
+            }
             int inN = SocialStore.InCount();
             int outN = SocialStore.OutCount();
             if (friendsTabReq != null)
@@ -1858,13 +1865,15 @@ partial class LauncherForm
 
     string SignalMe()
     {
+        // Сетевой идентификатор — только ник аккаунта лаунчера.
+        // Без входа заявки и приглашения не отправляются: иначе
+        // получатель не знает, кто ему пишет.
         try
         {
-            if (Luxe.Ready && Luxe.MyName.Length > 0) return Luxe.MyName.Trim();
-            if (Auth.LoggedIn && Auth.Name.Length > 0) return Auth.Name.Trim();
+            if (LuxeAccounts.LoggedIn) return LuxeAccounts.Nick.Trim();
         }
         catch { }
-        return nick == null ? "" : nick.Trim();
+        return "";
     }
 
     void SignalTick()

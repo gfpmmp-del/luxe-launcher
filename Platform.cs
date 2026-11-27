@@ -105,33 +105,78 @@ static class Os
         return a == McArch;
     }
 
+    // Заменить работающий exe новым и перезапустить лаунчер.
+    //
+    // Раньше здесь писался .bat в ASCII. В пути %APPDATA% или на
+    // рабочем столе с кириллицей («Новая папка») байты превращались
+    // в «?????», move не находил файл, и обновление «применялось»,
+    // но лаунчер оставался старым. Теперь команда для PowerShell
+    // кодируется в UTF-16LE/base64: путь доходит без искажений.
+    //
+    // Скрипт ждёт завершения текущего PID, затем до 45 секунд
+    // пытается скопировать новый файл поверх старого (антивирус и
+    // индексатор могут держать exe), после чего запускает его.
     public static void StartApplyScript(string newPath, string exePath, string dataDir)
     {
         if (IsWin)
         {
-            StringBuilder bb = new StringBuilder();
-            bb.AppendLine("@echo off");
-            bb.AppendLine("timeout /t 3 /nobreak >nul");
-            bb.AppendLine(":retry");
-            bb.AppendLine("move /Y \"" + newPath + "\" \"" + exePath + "\" >nul 2>&1");
-            bb.AppendLine("if errorlevel 1 ( timeout /t 2 /nobreak >nul & goto retry )");
-            bb.AppendLine("start \"\" \"" + exePath + "\"");
-            bb.AppendLine("(goto) 2>nul & del \"%~f0\"");
-            string bat = Path.Combine(dataDir, "update_apply.bat");
-            File.WriteAllText(bat, bb.ToString(), Encoding.ASCII);
+            string log = Cfg.LogPath("update_apply.log");
+            int pid = 0;
+            try { pid = Process.GetCurrentProcess().Id; } catch { }
+
+            StringBuilder ps = new StringBuilder();
+            ps.Append("$ErrorActionPreference='SilentlyContinue';");
+            ps.Append("$log='" + PsQuote(log) + "';");
+            ps.Append("function L($m){ try { Add-Content -LiteralPath $log -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $m) -Encoding UTF8 } catch {} };");
+            ps.Append("L 'apply start pid=" + pid + "';");
+            ps.Append("for($i=0;$i -lt 90;$i++){ if(-not (Get-Process -Id " + pid + " -ErrorAction SilentlyContinue)){ break }; Start-Sleep -Milliseconds 500 };");
+            ps.Append("L 'launcher exited';");
+            ps.Append("$src='" + PsQuote(newPath) + "';");
+            ps.Append("$dst='" + PsQuote(exePath) + "';");
+            ps.Append("$ok=$false;");
+            ps.Append("for($i=0;$i -lt 90;$i++){ try { Copy-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop; $ok=$true; L ('copy ok try=' + $i); break } catch { Start-Sleep -Milliseconds 500 } };");
+            ps.Append("if(-not $ok){ L 'copy failed'; }");
+            ps.Append("try { Start-Process -FilePath $dst -WorkingDirectory (Split-Path -Parent $dst) -ErrorAction Stop; L 'restarted'; } catch { L ('start failed: ' + $_.Exception.Message) };");
+
+            string enc = Convert.ToBase64String(Encoding.Unicode.GetBytes(ps.ToString()));
             ProcessStartInfo psi = new ProcessStartInfo();
-            psi.FileName = "cmd.exe";
-            psi.Arguments = "/c \"" + bat + "\"";
+            psi.FileName = "powershell.exe";
+            psi.Arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + enc;
             psi.WorkingDirectory = dataDir;
             psi.CreateNoWindow = true;
             psi.UseShellExecute = false;
-            Process.Start(psi);
+            try
+            {
+                Process.Start(psi);
+                try
+                {
+                    File.AppendAllText(log,
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " start pid=" + pid +
+                        " new=" + newPath + " exe=" + exePath + "\r\n", Encoding.UTF8);
+                }
+                catch { }
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    File.AppendAllText(log,
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " powershell failed: " + ex.Message + "\r\n",
+                        Encoding.UTF8);
+                }
+                catch { }
+            }
         }
         else
         {
             StringBuilder bb = new StringBuilder();
             bb.AppendLine("#!/bin/sh");
-            bb.AppendLine("sleep 3");
+            bb.AppendLine("pid=" + (pidOfSelf()));
+            bb.AppendLine("n=0");
+            bb.AppendLine("while [ $n -lt 20 ]; do");
+            bb.AppendLine("  if ! kill -0 $pid 2>/dev/null; then break; fi");
+            bb.AppendLine("  sleep 1; n=$((n+1));");
+            bb.AppendLine("done");
             bb.AppendLine("n=0");
             bb.AppendLine("while [ $n -lt 10 ]; do");
             bb.AppendLine("  if mv -f \"" + newPath + "\" \"" + exePath + "\" 2>/dev/null; then break; fi");
@@ -150,6 +195,20 @@ static class Os
             psi.UseShellExecute = false;
             Process.Start(psi);
         }
+    }
+
+    // PID текущего процесса: в PowerShell-ветке он не нужен, но
+    // shell-ветке нужен, чтобы дождаться выхода лаунчера.
+    static string pidOfSelf()
+    {
+        try { return Process.GetCurrentProcess().Id.ToString(); }
+        catch { return "0"; }
+    }
+
+    // Экранирование одинарных кавычек для PowerShell-строки.
+    static string PsQuote(string s)
+    {
+        return (s ?? "").Replace("'", "''");
     }
 
     public static void OpenFolder(string path)

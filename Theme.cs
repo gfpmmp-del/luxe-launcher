@@ -1474,6 +1474,39 @@ static class Art
         }
     }
 
+    // Мягкое двухцветное сияние у верха панели: индиго слева, бирюза
+    // справа. PathGradientBrush даёт плавный «ореол» без краёв; всё
+    // в try/catch, потому что на старых GDI+ падать здесь нечем.
+    static void TryAurora(Graphics g, Rectangle r)
+    {
+        try
+        {
+            using (GraphicsPath gp = new GraphicsPath())
+            {
+                gp.AddEllipse(-r.Width * 0.55f, -r.Height * 0.30f,
+                              r.Width * 1.75f, r.Height * 0.80f);
+                using (PathGradientBrush pg = new PathGradientBrush(gp))
+                {
+                    pg.CenterColor = Color.FromArgb(92, 99, 102, 241);
+                    pg.SurroundColors = new Color[] { Color.FromArgb(0, 99, 102, 241) };
+                    g.FillPath(pg, gp);
+                }
+            }
+            using (GraphicsPath gp = new GraphicsPath())
+            {
+                gp.AddEllipse(r.Width * 0.20f, -r.Height * 0.18f,
+                              r.Width * 1.35f, r.Height * 0.55f);
+                using (PathGradientBrush pg = new PathGradientBrush(gp))
+                {
+                    pg.CenterColor = Color.FromArgb(58, 34, 211, 238);
+                    pg.SurroundColors = new Color[] { Color.FromArgb(0, 34, 211, 238) };
+                    g.FillPath(pg, gp);
+                }
+            }
+        }
+        catch { }
+    }
+
     static void PaintSide(Graphics g, Rectangle r)
     {
         GraphicsState st = g.Save();
@@ -1537,6 +1570,13 @@ static class Art
             b.InterpolationColors = cb;
             g.FillRectangle(b, r);
         }
+
+        // Стеклянная подсветка верха: два мягких сияния (индиго слева,
+        // бирюза справа) под логотипом. Рисуется поверх плоской заливки
+        // панели — иначе непрозрачный верх градиента её стирает, и
+        // сайдбар читается плоско. Это и есть «стекло» шапки сайдбара.
+        TryAurora(g, r);
+
         // и лёгкое затемнение у самого низа — под подписями футера
         using (LinearGradientBrush b = new LinearGradientBrush(
             new Rectangle(r.X, r.Bottom - 96, Math.Max(2, r.Width), 96),

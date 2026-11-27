@@ -20,7 +20,7 @@ $png  = Join-Path $proj "assets\art\logo_v3.png"
 $fontsDir = Join-Path $proj "fonts"
 $photo = Join-Path $proj "assets\artem.jpg"
 
-$sources = @("Platform.cs", "Launcher.cs", "Theme.cs", "Chrome.cs", "Artem.cs", "ArtemFlow.cs", "Auth.cs", "Skin.cs", "Skin3D.cs", "Social.cs", "Together.cs", "CapeMod.cs", "PlayerSkin.cs", "SitFigure.cs", "Settings.cs", "AiClient.cs", "WebSearch.cs", "Assistant.cs")
+$sources = @("Platform.cs", "Launcher.cs", "Theme.cs", "Chrome.cs", "Artem.cs", "ArtemFlow.cs", "Auth.cs", "Accounts.cs", "Mascot.cs", "AccountUi.cs", "Skin.cs", "Skin3D.cs", "Social.cs", "Together.cs", "CapeMod.cs", "PlayerSkin.cs", "SitFigure.cs", "Settings.cs", "AiClient.cs", "WebSearch.cs", "Assistant.cs")
 foreach ($s in $sources) {
     if (-not (Test-Path (Join-Path $proj $s))) {
         Write-Host "НЕТ ФАЙЛА ИСХОДНИКА: $s" -ForegroundColor Red; exit 1
