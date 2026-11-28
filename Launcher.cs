@@ -31,7 +31,7 @@ static class Cfg
     public const string ManifestUrl = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
     public const string JavaJreUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse";
     public const string JavaJdkUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse";
-    public const string AppVersion = "4.0.0";
+    public const string AppVersion = "4.0.1";
 #if ARTYOM
     // Подарочный билд для Артёма: собирается ключом /define:ARTYOM
     public const bool GiftBuild = true;
@@ -2486,6 +2486,11 @@ static partial class Ui
     public static readonly Color GrayDim = Color.FromArgb(128, 135, 164);
     public static readonly Color Accent1 = Color.FromArgb(0, 255, 200);
     public static readonly Color Accent2 = Color.FromArgb(180, 0, 255);
+    // Первичный акцент (кнопки-действия, выбранный пункт, активный чип):
+    // в референсе это чистый фиолетовый градиент, а не бирюза. Ссылки
+    // («Все версии →») при этом остаются зелёно-бирюзовыми — Accent1.
+    public static readonly Color PrimeT = Color.FromArgb(146, 62, 253);
+    public static readonly Color PrimeB = Color.FromArgb(86, 10, 210);
     public static readonly Color AccentDark = Color.FromArgb(0, 120, 100);
     public static readonly Color Orange = Color.FromArgb(247, 168, 92);
     public static readonly Color Green = Color.FromArgb(53, 208, 127);
@@ -2871,8 +2876,8 @@ static partial class Ui
 class RoundedButton : Button
 {
     public int Radius = 12;
-    public Color Top = Ui.Accent1;
-    public Color Bottom = Ui.Accent2;
+    public Color Top = Ui.PrimeT;
+    public Color Bottom = Ui.PrimeB;
     public Color HoverTop;
     public Color HoverBottom;
     public Color PressTop;
@@ -3033,7 +3038,7 @@ class RoundedButton : Button
             using (GraphicsPath gp = Ui.RoundRect(body, rad))
             {
                 g.SetClip(gp);
-                using (SolidBrush gb = new SolidBrush(Color.FromArgb(56, Ui.Accent1)))
+                using (SolidBrush gb = new SolidBrush(Color.FromArgb(60, Ui.PrimeT)))
                 {
                     GraphicsState gs = g.Save();
                     g.TranslateTransform(0, 3f);
@@ -3160,6 +3165,10 @@ class PixelLabel : Label
     // умолчанию добавляет к строке почти половину кегля, из-за чего
     // трёхстрочный заголовок в баннере разъезжается. 0 — как обычно.
     public int LineH = 0;
+    // Подсветка одного слова внутри строки: в референсе «мир Minecraft!»
+    // рисуется с акцентным последним словом. Пусто — весь текст одним цветом.
+    public string HiWord = "";
+    public Color HiColor = Color.Empty;
 
     public PixelLabel()
     {
@@ -3209,6 +3218,9 @@ class PixelLabel : Label
         if (LineH > 0 && Text.IndexOf('\n') >= 0)
         {
             string[] parts = Text.Replace("\r", "").Split('\n');
+            // для подсветки слова горизонтальное выравнивание считаем вручную
+            TextFormatFlags mf = fl & ~(TextFormatFlags.HorizontalCenter | TextFormatFlags.Right
+                | TextFormatFlags.VerticalCenter | TextFormatFlags.Bottom | TextFormatFlags.WordBreak);
             for (int i = 0; i < parts.Length; i++)
             {
                 Rectangle lr = new Rectangle(0, i * LineH, Width, LineH + 4);
@@ -3216,6 +3228,24 @@ class PixelLabel : Label
                     TextRenderer.DrawText(g, parts[i], Font,
                         new Rectangle(ShadowShift, lr.Y + ShadowShift, lr.Width, lr.Height),
                         Color.FromArgb(ShadowAlpha, 0, 0, 0), fl);
+                int hi = (HiColor.A != 0 && !string.IsNullOrEmpty(HiWord)) ? parts[i].IndexOf(HiWord) : -1;
+                if (hi >= 0)
+                {
+                    string pre = parts[i].Substring(0, hi);
+                    string word = parts[i].Substring(hi, HiWord.Length);
+                    string post = parts[i].Substring(hi + HiWord.Length);
+                    int fullW = TextRenderer.MeasureText(g, parts[i], Font, new Size(int.MaxValue, int.MaxValue), mf).Width;
+                    int x = 0;
+                    if ((fl & TextFormatFlags.HorizontalCenter) != 0) x = (Width - fullW) / 2;
+                    else if ((fl & TextFormatFlags.Right) != 0) x = Width - fullW;
+                    int preW = pre.Length > 0 ? TextRenderer.MeasureText(g, pre, Font, new Size(int.MaxValue, int.MaxValue), mf).Width : 0;
+                    int wordW = TextRenderer.MeasureText(g, word, Font, new Size(int.MaxValue, int.MaxValue), mf).Width;
+                    TextFormatFlags pfl = fl & ~(TextFormatFlags.HorizontalCenter | TextFormatFlags.Right);
+                    TextRenderer.DrawText(g, pre, Font, new Rectangle(x, lr.Y, Width, lr.Height), ForeColor, pfl);
+                    TextRenderer.DrawText(g, word, Font, new Rectangle(x + preW, lr.Y, Width, lr.Height), HiColor, pfl);
+                    TextRenderer.DrawText(g, post, Font, new Rectangle(x + preW + wordW, lr.Y, Width, lr.Height), ForeColor, pfl);
+                    continue;
+                }
                 TextRenderer.DrawText(g, parts[i], Font, lr, Enabled ? ForeColor : Ui.GrayDim, fl);
             }
             return;
@@ -3318,7 +3348,7 @@ class NavButton : Button
         if (selC > 0.01f)
         {
             using (GraphicsPath sp = Ui.RoundRect(new RectangleF(body.X + 2, body.Y + 3, body.Width, body.Height), rad))
-            using (SolidBrush sb = new SolidBrush(Color.FromArgb((int)(100 * selC), Ui.Accent1)))
+            using (SolidBrush sb = new SolidBrush(Color.FromArgb((int)(100 * selC), Ui.PrimeT)))
                 g.FillPath(sb, sp);
         }
 
@@ -3329,8 +3359,8 @@ class NavButton : Button
                 // вертикальный градиент, верх чуть светлее — плашка
                 // получается «объёмной», как в современных лаунчерах
                 using (LinearGradientBrush b = new LinearGradientBrush(body,
-                    Ui.Lerp(Ui.SurfaceHi, Ui.Lerp(Ui.Accent1, Color.White, 0.18f), selC),
-                    Ui.Lerp(Ui.SurfaceHi, Ui.Accent2, selC), 90f))
+                    Ui.Lerp(Ui.SurfaceHi, Ui.Lerp(Ui.PrimeT, Color.White, 0.18f), selC),
+                    Ui.Lerp(Ui.SurfaceHi, Ui.PrimeB, selC), 90f))
                     g.FillPath(b, p);
                 using (Pen pen = new Pen(Color.FromArgb((int)(120 * selC), 255, 255, 255), 1f))
                 {
@@ -4887,6 +4917,9 @@ class CardHeader : Control
 {
     public int Radius = 0;          // скругление верхних углов (по карточке)
     public string Big = "?";
+    // seed обложки, когда версия не рисуется на картинке (Big пустой),
+    // но карточки всё равно должны получать разные кадры
+    public int CoverSeed = 0;
     public string Tag = "";
     public float Hue = -1f;
     // Пользовательская обложка из папки covers; null — процедурный пейзаж
@@ -4970,12 +5003,12 @@ class CardHeader : Control
                 p.CloseFigure();
                 GraphicsState st = g.Save();
                 g.SetClip(p);
-                if (Img != null) DrawImg(g, rr); else Art.CardCover(g, rr, Big, h, Tag);
+                if (Img != null) DrawImg(g, rr); else Art.CardCover(g, rr, Big, h, Tag, CoverSeed);
                 g.Restore(st);
             }
         }
         else if (Img != null) DrawImg(g, ClientRectangle);
-        else Art.CardCover(g, ClientRectangle, Big, h, Tag);
+        else Art.CardCover(g, ClientRectangle, Big, h, Tag, CoverSeed);
     }
 
     // PNG во всю обложку: кроп по центру под размер карточки,
@@ -4999,6 +5032,22 @@ class CardHeader : Control
                 Color.FromArgb(0, 4, 5, 12), Color.FromArgb(150, 4, 5, 12), 90f))
                 g.FillRectangle(sh, r.X, r.Bottom - shadeH, r.Width, shadeH);
 
+            // версия/имя прямо на обложке — как в процедурном варианте
+            if (!string.IsNullOrEmpty(Big))
+            {
+                float baseSize = Math.Max(11f, r.Height * 0.22f);
+                Font vf = Ui.Font(baseSize, FontStyle.Bold);
+                float avail = r.Width - 20f;
+                Size m0 = TextRenderer.MeasureText(Big, vf);
+                if (m0.Width > avail && m0.Width > 0)
+                    vf = Ui.Font(Math.Max(8f, baseSize * avail / m0.Width), FontStyle.Bold);
+                Size vsz = TextRenderer.MeasureText(Big, vf);
+                int vtx = r.X + 10;
+                int vty = r.Bottom - vsz.Height - 6;
+                TextRenderer.DrawText(g, Big, vf, new Point(vtx + 1, vty + 1), Color.FromArgb(120, 0, 0, 0));
+                TextRenderer.DrawText(g, Big, vf, new Point(vtx, vty), Color.FromArgb(248, 255, 255, 255));
+            }
+
             if (!string.IsNullOrEmpty(Tag))
             {
                 Font f = Ui.Font(7f, FontStyle.Bold);
@@ -5014,7 +5063,7 @@ class CardHeader : Control
         catch
         {
             // битая картинка — не оставляем чёрную дыру
-            Art.CardCover(g, r, Big, Hue < 0f ? 268f : Hue, Tag);
+            Art.CardCover(g, r, Big, Hue < 0f ? 268f : Hue, Tag, CoverSeed);
         }
     }
 }
@@ -5399,6 +5448,14 @@ partial class LauncherForm : Form
     LoadBar updBar;
     Label updPct;
     MascotToast mascotToast;
+    // высота нижней статус-панели (как в референсе): контент и футер
+    // сайдбара прижаты к её верхней границе, а не к низу окна
+    const int BotH = 44;
+    // экран загрузки при старте: висит поверх окна, пока инициализация
+    // реально не закончится (интерфейс, Java, версии, сервис)
+    StartupSplash splash;
+    bool startupDone = false;
+    public static bool DbgSplashHold = false;
     // вкладка «Обновления» в настройках: строка результата проверки,
     // чтобы «у вас уже последняя версия» было видно прямо на вкладке,
     // а не только в нижней строке статуса (она перекрыта карточкой)
@@ -5421,6 +5478,12 @@ partial class LauncherForm : Form
     TextBox topSearchBox;
     Label rightStatusLbl;
     StatusDot rightStatusDot;
+    // нижняя статус-панель (как в референсе)
+    RoundedPanel botBar;
+    Label botUpdLbl;
+    IconView botUpdIco;
+    RoundedPanel botUpdTrack;
+    RoundedPanel botUpdFill;
     PixelLabel homeListHead;
     Panel popularBlock;
     TextLink homeAllVerLink;
@@ -5608,20 +5671,37 @@ partial class LauncherForm : Form
         lblProfileSub.ForeColor = Ui.Gold;
         lblProfileSub.BackColor = Color.Transparent;
         lblProfileSub.AutoSize = false;
-        lblProfileSub.Location = new Point(64, 33);
-        lblProfileSub.Size = new Size(SideW - 124, 18);
+        lblProfileSub.Location = new Point(74, 33);
+        lblProfileSub.Size = new Size(SideW - 134, 18);
         lblProfileSub.Click += OnAccount;
         profileCard.Controls.Add(lblProfileSub);
 
-        // Корона «Premium» справа от статуса — как в референсе
+        // зелёная точка «онлайн» слева от статуса — как в референсе
+        StatusDot profileDot = new StatusDot();
+        profileDot.DotColor = Ui.Green;
+        profileDot.Size = new Size(10, 10);
+        profileDot.Location = new Point(62, 36);
+        profileDot.Click += OnAccount;
+        profileCard.Controls.Add(profileDot);
+
+        // Корона «Premium» слева от шеврона — как в референсе
         profileCrown = new IconView();
         profileCrown.Icon = Ico.Crown;
         profileCrown.Col = Ui.Gold;
         profileCrown.Size = new Size(14, 14);
-        profileCrown.Location = new Point(SideW - 50, 35);
+        profileCrown.Location = new Point(SideW - 66, 35);
         profileCrown.Visible = false;
         profileCrown.Click += OnAccount;
         profileCard.Controls.Add(profileCrown);
+
+        // Шеврон «v» у правого края карточки профиля — приглашение открыть аккаунт
+        IconView profileChev = new IconView();
+        profileChev.Icon = Ico.ChevDown;
+        profileChev.Col = Ui.GrayDim;
+        profileChev.Size = new Size(11, 11);
+        profileChev.Location = new Point(SideW - 42, 27);
+        profileChev.Click += OnAccount;
+        profileCard.Controls.Add(profileChev);
         RefreshProfile();
 
         // ===== Пункты меню =====
@@ -5638,7 +5718,6 @@ partial class LauncherForm : Form
         {
             NavButton b = new NavButton();
             b.Icon = icons[i];
-            b.HasArrow = (navs[i] == "Установки");
             b.Title = navs[i];
             b.Location = new Point(12, ny);
             b.Size = new Size(SideW - 24, 40);
@@ -5660,10 +5739,68 @@ partial class LauncherForm : Form
             ny += 44;
         }
 
+        // ===== Нижний блок сайдбара: Premium + Настройки/Аккаунты/Выйти =====
+        // В референсе под меню лежит золотая промо-карточка, а под ней —
+        // служебные пункты. Всё прижато к низу и поднято на высоту нижней
+        // статус-панели (BotH), чтобы не уезжать под неё.
+        int sbBase = H - BotH;      // верх нижней статус-панели
+
+        RoundedPanel sidePrem = new RoundedPanel();
+        sidePrem.Radius = 12;
+        sidePrem.BackColor = Ui.Card;
+        sidePrem.Border = Color.FromArgb(150, Ui.Gold);
+        sidePrem.Glass = false;
+        sidePrem.Gradient = true;
+        sidePrem.GradFrom = Color.FromArgb(48, 36, 20);
+        sidePrem.GradTo = Color.FromArgb(22, 18, 30);
+        sidePrem.GradAngle = 30f;
+        sidePrem.Location = new Point(12, sbBase - 306);
+        sidePrem.Size = new Size(SideW - 24, 78);
+        sidePrem.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+        // на низком окне промо наезжает на меню — тогда просто не показываем
+        sidePrem.Visible = sidePrem.Top > ny + 8;
+        side.Controls.Add(sidePrem);
+
+        IconView spIco = new IconView();
+        spIco.Icon = Ico.Crown;
+        spIco.Col = Ui.Gold;
+        spIco.Size = new Size(19, 19);
+        spIco.Location = new Point(13, 13);
+        sidePrem.Controls.Add(spIco);
+
+        PixelLabel spT = new PixelLabel();
+        spT.Text = "Luxe Premium";
+        spT.Font = Ui.Font(9.5f, FontStyle.Bold);
+        spT.ForeColor = Ui.Txt;
+        spT.BackColor = Color.Transparent;
+        spT.AutoSize = false;
+        spT.Location = new Point(40, 11);
+        spT.Size = new Size(SideW - 58, 18);
+        sidePrem.Controls.Add(spT);
+
+        Label spS = new Label();
+        spS.Text = "Больше возможностей!";
+        spS.Font = Ui.Font(7.2f);
+        spS.ForeColor = Ui.GrayDim;
+        spS.BackColor = Color.Transparent;
+        spS.AutoSize = false;
+        spS.Location = new Point(40, 29);
+        spS.Size = new Size(SideW - 58, 14);
+        sidePrem.Controls.Add(spS);
+
+        RoundedButton spBtn = RoundedButton.Dark("Улучшить  →", 8);
+        spBtn.Font = Ui.Font(8, FontStyle.Bold);
+        spBtn.ForeColor = Ui.Gold;
+        spBtn.BorderColor = Color.FromArgb(120, Ui.Gold);
+        spBtn.Location = new Point(11, 48);
+        spBtn.Size = new Size(SideW - 46, 24);
+        spBtn.Click += delegate { SetStatus("Luxe Premium — скоро", true); };
+        sidePrem.Controls.Add(spBtn);
+
         NavButton bSet = new NavButton();
         bSet.Icon = Ico.Gear;
         bSet.Title = "Настройки";
-        bSet.Location = new Point(12, H - 152);
+        bSet.Location = new Point(12, sbBase - 216);
         bSet.Size = new Size(SideW - 24, 40);
         bSet.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
         bSet.Click += OnSettings;
@@ -5671,11 +5808,34 @@ partial class LauncherForm : Form
         NavButton bAcc = new NavButton();
         bAcc.Icon = Ico.User;
         bAcc.Title = "Аккаунты";
-        bAcc.Location = new Point(12, H - 108);
+        bAcc.Location = new Point(12, sbBase - 172);
         bAcc.Size = new Size(SideW - 24, 40);
         bAcc.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
         bAcc.Click += OnAccount;
         side.Controls.Add(bAcc);
+        NavButton bOut = new NavButton();
+        bOut.Icon = Ico.Power;
+        bOut.Title = "Выйти";
+        bOut.Location = new Point(12, sbBase - 128);
+        bOut.Size = new Size(SideW - 24, 40);
+        bOut.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+        bOut.Click += delegate
+        {
+            if (LuxeAccounts.LoggedIn)
+            {
+                // лёгкий выход без открытия карточки аккаунта
+                LuxeAccounts.Logout();
+                try { Luxe.Logout(); } catch { }
+                try { FriendsCacheClear(); } catch { }
+                RefreshProfile();
+                UpdateLicUi();
+                SetStatus("Вы вышли из аккаунта лаунчера", true);
+                try { SocialState(); } catch { }
+                if (view == ViewFriends) { try { FriendsRender(); } catch { } }
+            }
+            else OnAccount(null, EventArgs.Empty);
+        };
+        side.Controls.Add(bOut);
 
         Label lblVerFoot = new Label();
         lblVerFoot.Text = "Версия " + Cfg.AppVersion;
@@ -5683,7 +5843,7 @@ partial class LauncherForm : Form
         lblVerFoot.ForeColor = Ui.GrayDim;
         lblVerFoot.BackColor = Color.Transparent;
         lblVerFoot.AutoSize = false;
-        lblVerFoot.Location = new Point(16, H - 56);
+        lblVerFoot.Location = new Point(16, sbBase - 44);
         lblVerFoot.Size = new Size(SideW - 32, 16);
         lblVerFoot.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
         side.Controls.Add(lblVerFoot);
@@ -5693,7 +5853,7 @@ partial class LauncherForm : Form
         lblSys.ForeColor = Ui.Green;
         lblSys.BackColor = Color.Transparent;
         lblSys.AutoSize = false;
-        lblSys.Location = new Point(16, H - 38);
+        lblSys.Location = new Point(16, sbBase - 26);
         lblSys.Size = new Size(SideW - 32, 16);
         lblSys.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
         side.Controls.Add(lblSys);
@@ -5738,11 +5898,12 @@ partial class LauncherForm : Form
         int maxX = closeX - wbW - wbGap;
         int minX = maxX - wbW - wbGap;
         int sepX = minX - 14;
-        int themeX = sepX - 10 - 34;
-        int bellX = themeX - 40;
-        int aiX = bellX - 40;
-        int searchW = Math.Max(240, aiX - 24 - Marg);
-        if (searchW > 520) searchW = 520;
+        // порядок как в референсе: [колокол] [Discord] [Telegram]
+        int tgX = sepX - 10 - 34;
+        int dcX = tgX - 40;
+        int bellX = dcX - 40;
+        int searchW = Math.Max(240, bellX - 24 - Marg);
+        if (searchW > 640) searchW = 640;
 
         // Глобальный поиск (версии, моды, серверы)
         topSearchWrap = new RoundedPanel();
@@ -5772,7 +5933,7 @@ partial class LauncherForm : Form
         topSearchBox.BorderStyle = BorderStyle.None;
         topSearchBox.Text = "Поиск версий, модов, серверов...";
         topSearchBox.Location = new Point(38, 8);
-        topSearchBox.Size = new Size(searchW - 52, 18);
+        topSearchBox.Size = new Size(searchW - 76, 18);
         topSearchBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         topSearchBox.GotFocus += delegate
         {
@@ -5808,6 +5969,18 @@ partial class LauncherForm : Form
         };
         topSearchWrap.Controls.Add(topSearchBox);
 
+        // Помощник: искра внутри поля поиска справа. Отдельной кнопки в
+        // топбаре нет, поэтому ряд иконок совпадает с референсом, но
+        // функция остаётся доступной.
+        IconView aiIco = new IconView();
+        aiIco.Icon = Ico.Sparkle;
+        aiIco.Col = Ui.Accent1;
+        aiIco.Size = new Size(17, 17);
+        aiIco.Location = new Point(searchW - 30, 9);
+        aiIco.Cursor = Cursors.Hand;
+        aiIco.Click += delegate { ShowAi(); };
+        topSearchWrap.Controls.Add(aiIco);
+
         topBell = RoundedButton.IcoBtn(Ico.Bell, 34, 9);
         topBell.IconSize = 16;
         topBell.Location = new Point(bellX, 15);
@@ -5815,28 +5988,37 @@ partial class LauncherForm : Form
         topBell.Click += delegate { ShowView(ViewNews); };
         top.Controls.Add(topBell);
 
-        // Помощник: кнопка с искрой слева от колокольчика.
-        RoundedButton topAi = RoundedButton.IcoBtn(Ico.Sparkle, 34, 9);
-        topAi.IconSize = 17;
-        topAi.Location = new Point(aiX, 15);
-        topAi.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        topAi.ForeColor = Ui.Accent1;
-        topAi.Click += delegate { ShowAi(); };
-        top.Controls.Add(topAi);
-
-        // маленькая точка-уведомление на колокольчике
-        Panel bellDot = new Panel();
-        bellDot.BackColor = Ui.Accent1;
-        bellDot.Size = new Size(7, 7);
-        bellDot.Location = new Point(topBell.Width - 10, 7);
+        // бейдж-уведомление на колокольчике: красный кружок с числом
+        Label bellDot = new Label();
+        bellDot.AutoSize = false;
+        bellDot.TextAlign = ContentAlignment.MiddleCenter;
+        bellDot.BackColor = Color.FromArgb(239, 68, 68);
+        bellDot.ForeColor = Color.White;
+        bellDot.Font = Ui.Font(6.5f, FontStyle.Bold);
+        bellDot.Text = "1";
+        bellDot.Size = new Size(13, 13);
+        bellDot.Location = new Point(topBell.Width - 16, 4);
+        using (GraphicsPath gp = new GraphicsPath())
+        {
+            gp.AddEllipse(0, 0, bellDot.Width, bellDot.Height);
+            bellDot.Region = new Region(gp);
+        }
         topBell.Controls.Add(bellDot);
 
-        topTheme = RoundedButton.IcoBtn(Ico.Moon, 34, 9);
-        topTheme.IconSize = 16;
-        topTheme.Location = new Point(themeX, 15);
+        // Discord и Telegram — как в референсе, сразу под колокольчиком
+        topTheme = RoundedButton.IcoBtn(Ico.Discord, 34, 9);
+        topTheme.IconSize = 18;
+        topTheme.Location = new Point(dcX, 15);
         topTheme.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        topTheme.Click += delegate { SetStatus("Светлая тема появится в следующем обновлении", true); };
+        topTheme.Click += delegate { SetStatus("Discord Luxe — ссылка появится позже", true); };
         top.Controls.Add(topTheme);
+
+        RoundedButton topTg = RoundedButton.IcoBtn(Ico.Telegram, 34, 9);
+        topTg.IconSize = 17;
+        topTg.Location = new Point(tgX, 15);
+        topTg.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        topTg.Click += delegate { SetStatus("Telegram Luxe — ссылка появится позже", true); };
+        top.Controls.Add(topTg);
 
         Panel topSep = new Panel();
         topSep.BackColor = Ui.Line;
@@ -5884,10 +6066,12 @@ partial class LauncherForm : Form
         Controls.Add(banner);
 
         lblHeroHi = new PixelLabel();
-        lblHeroHi.Text = "Погрузись\nв бесконечный\nмир приключений";
+        lblHeroHi.Text = "Погрузись\nв бесконечный\nмир Minecraft!";
         lblHeroHi.Font = Ui.Font(17, FontStyle.Bold);
         lblHeroHi.LineH = 24;
         lblHeroHi.ForeColor = Ui.Txt;
+        lblHeroHi.HiWord = "Minecraft!";
+        lblHeroHi.HiColor = Ui.PrimeT;
         lblHeroHi.BackColor = Color.Transparent;
         lblHeroHi.AutoSize = false;
         lblHeroHi.Location = new Point(26, 14);
@@ -5895,7 +6079,7 @@ partial class LauncherForm : Form
         banner.Controls.Add(lblHeroHi);
         lblHeroSub = new Label();
         // подпись под заголовком: короткая, в две строки
-        lblHeroSub.Text = "Исследуй, строй, выживай.\r\nИграй по своим правилам.";
+        lblHeroSub.Text = "Исследуй, строй, выживай\r\nиграй с друзьями.";
         lblHeroSub.Font = Ui.Font(9);
         lblHeroSub.ForeColor = Color.FromArgb(214, 220, 240);
         lblHeroSub.BackColor = Color.Transparent;
@@ -5960,7 +6144,7 @@ partial class LauncherForm : Form
         // Высоты считаем от низа колонки, чтобы блоки всегда доходили
         // до футера и не оставалось пустого «хвоста».
         int rightX = W - Marg - RightW;
-        int rightH = H - heroY - Marg;
+        int rightH = H - heroY - Marg - BotH;
         rightCol = new Panel();
         rightCol.BackColor = Ui.Bg;
         rightCol.Location = new Point(rightX, heroY);
@@ -5970,7 +6154,7 @@ partial class LauncherForm : Form
 
         // Высоты правой колонки берём из общей метрики (Metrics):
         // раньше здесь была своя копия формул, и она разошлась с HomeLayout.
-        HomeMetrics hm0 = Metrics(H);
+        HomeMetrics hm0 = Metrics(H - BotH);
         int premH = hm0.PremH;
         int newsH = hm0.NewsH;
         int quickH = hm0.QuickH;
@@ -6087,8 +6271,8 @@ partial class LauncherForm : Form
         // ===== Заголовок списка =====
         int listHeadY = tbY + 44;
         IconView clockIco = new IconView();
-        clockIco.Icon = Ico.Clock;
-        clockIco.Col = Ui.Gray;
+        clockIco.Icon = Ico.Box;
+        clockIco.Col = Ui.Accent2;   // фиолетовый куб — как в референсе
         clockIco.Location = new Point(PX + 2, listHeadY + 4);
         clockIco.Size = new Size(17, 17);
         Controls.Add(clockIco);
@@ -6106,7 +6290,8 @@ partial class LauncherForm : Form
         // ===== Список версий =====
         int vbY = listHeadY + 30;
         int popH = 110;                     // блок «Популярные моды» внизу
-        int vbH = H - vbY - Marg - popH;
+        int popBottom = H - BotH - 8;       // не заходим под нижнюю панель
+        int vbH = popBottom - popH - vbY;
         if (vbH < 180) vbH = 180;
         verListBox = new Panel();
         verListBox.BackColor = Ui.Bg;
@@ -6129,11 +6314,113 @@ partial class LauncherForm : Form
         // ===== Популярные моды =====
         popularBlock = new Panel();
         popularBlock.BackColor = Ui.Bg;
-        popularBlock.Location = new Point(PX, H - Marg - popH + 6);
+        popularBlock.Location = new Point(PX, H - BotH - 8 - popH + 6);
         popularBlock.Size = new Size(PW, popH - 6);
         popularBlock.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         Controls.Add(popularBlock);
         BuildPopularMods();
+
+        // ===== Нижняя статус-панель (как в референсе) =====
+        // Тонкая полоса во всю ширину: состояние систем, версия лаунчера
+        // и индикатор обновления. Низ панели уходит за край окна, поэтому
+        // скруглены только верхние углы.
+        botBar = new RoundedPanel();
+        botBar.Radius = 14;
+        botBar.BackColor = Color.FromArgb(11, 6, 24);
+        botBar.Border = Color.FromArgb(70, 120, 90, 210);
+        botBar.BorderW = 1;
+        botBar.Glass = false;
+        botBar.Gradient = true;
+        botBar.GradFrom = Color.FromArgb(24, 15, 48);
+        botBar.GradTo = Color.FromArgb(9, 5, 20);
+        botBar.GradAngle = 90f;
+        botBar.Location = new Point(0, H - BotH);
+        botBar.Size = new Size(W, BotH + 18);
+        botBar.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+        Controls.Add(botBar);
+
+        StatusDot botDot = new StatusDot();
+        botDot.DotColor = Ui.Green;
+        botDot.Size = new Size(10, 10);
+        botDot.Location = new Point(Marg + 2, BotH / 2 - 5);
+        botBar.Controls.Add(botDot);
+
+        Label botSys = new Label();
+        botSys.Text = "Все системы работают";
+        botSys.Font = Ui.Font(8);
+        botSys.ForeColor = Ui.Green;
+        botSys.BackColor = Color.Transparent;
+        botSys.AutoSize = false;
+        botSys.Location = new Point(Marg + 20, BotH / 2 - 10);
+        botSys.Size = new Size(160, 20);
+        botBar.Controls.Add(botSys);
+
+        Panel botSep = new Panel();
+        botSep.BackColor = Ui.Line;
+        botSep.Location = new Point(Marg + 196, BotH / 2 - 7);
+        botSep.Size = new Size(1, 14);
+        botBar.Controls.Add(botSep);
+
+        Label botVer = new Label();
+        botVer.Text = "Версия лаунчера: v" + Cfg.AppVersion;
+        botVer.Font = Ui.Font(8);
+        botVer.ForeColor = Ui.Gray;
+        botVer.BackColor = Color.Transparent;
+        botVer.AutoSize = false;
+        botVer.Location = new Point(Marg + 212, BotH / 2 - 10);
+        botVer.Size = new Size(300, 20);
+        botBar.Controls.Add(botVer);
+
+        // правая часть — состояние обновления (обновляется из CheckUpdates)
+        int progW = 96;
+        int progX = W - Marg - progW;
+        botUpdLbl = new Label();
+        botUpdLbl.Font = Ui.Font(8);
+        botUpdLbl.ForeColor = Ui.GrayDim;
+        botUpdLbl.BackColor = Color.Transparent;
+        botUpdLbl.AutoSize = false;
+        botUpdLbl.TextAlign = ContentAlignment.MiddleRight;
+        botUpdLbl.Location = new Point(progX - 160, BotH / 2 - 10);
+        botUpdLbl.Size = new Size(148, 20);
+        botUpdLbl.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        botBar.Controls.Add(botUpdLbl);
+
+        botUpdIco = new IconView();
+        botUpdIco.Icon = Ico.Download;
+        botUpdIco.Col = Ui.GrayDim;
+        botUpdIco.Size = new Size(15, 15);
+        botUpdIco.Location = new Point(progX - 182, BotH / 2 - 8);
+        botUpdIco.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        botBar.Controls.Add(botUpdIco);
+
+        // Полоса прогресса как в референсе: не серая, а виолетовая —
+        // тёмный трек с ярким заполнением слева (горизонтальный градиент).
+        botUpdTrack = new RoundedPanel();
+        botUpdTrack.Radius = 4;
+        botUpdTrack.BorderW = 0;
+        botUpdTrack.Glass = false;
+        botUpdTrack.Gradient = true;
+        botUpdTrack.GradAngle = 0f;
+        botUpdTrack.GradFrom = Color.FromArgb(92, 36, 198);
+        botUpdTrack.GradTo = Color.FromArgb(46, 22, 110);
+        botUpdTrack.Size = new Size(progW, 8);
+        botUpdTrack.Location = new Point(progX, BotH / 2 - 4);
+        botUpdTrack.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        botBar.Controls.Add(botUpdTrack);
+
+        botUpdFill = new RoundedPanel();
+        botUpdFill.Radius = 4;
+        botUpdFill.BorderW = 0;
+        botUpdFill.Glass = false;
+        botUpdFill.Gradient = true;
+        botUpdFill.GradAngle = 0f;
+        botUpdFill.GradFrom = Color.FromArgb(120, 42, 238);
+        botUpdFill.GradTo = Color.FromArgb(104, 30, 214);
+        botUpdFill.Size = new Size((int)(progW * 0.52f), 8);
+        botUpdFill.Location = new Point(0, 0);
+        botUpdTrack.Controls.Add(botUpdFill);
+
+        BottomUpdState();
 
         // ===== Разделы (Новости / Моды) =====
         // Сами разделы строит BuildSectionViews() — он кладёт контролы
@@ -6313,28 +6600,124 @@ partial class LauncherForm : Form
         {
             // уголки и тёмная рамка окна (Win11), на Win10 просто молчит
             try { ChromeDwm(); } catch { }
-            // разделы гасим только после показа формы: до Show явный
-            // Visible=false ломает их отрисовку (особенность WinForms)
-            try { BeginInvoke(new Action(delegate { try { ApplyView(); } catch { } })); } catch { }
-            try
-            {
-                string j0 = Mc.FindLocalJava();
-                if (j0 != null)
-                {
-                    javaExe = j0;
-                    SetStatus("Java найдена. Готов к запуску.", true);
-                }
-                else SetStatus("Java скачается сама при первом запуске.", true);
-            }
-            catch { }
-            try { LoadVersions(); }
-            catch (Exception ex) { SetStatus("Ошибка версий: " + ex.Message, false); }
-            // Друзья и плащи: вход в сервис и первый heartbeat
-            try { SocialStart(); } catch { }
-            Thread u = new Thread((ThreadStart)delegate { CheckUpdates(false); });
-            u.IsBackground = true;
-            u.Start();
+            // Экран загрузки: сначала рисуем его, и только потом тяжёлую
+            // инициализацию. Так пользователь видит «Загрузка» с первых
+            // миллисекунд, а не подвисшее пустое окно.
+            StartSplash();
         };
+    }
+
+    // ---------- стартовый экран загрузки ----------
+
+    void StartSplash()
+    {
+        try
+        {
+            splash = new StartupSplash();
+            splash.Gone = delegate { splash = null; };
+            splash.Bounds = new Rectangle(0, 0, ClientSize.Width, ClientSize.Height);
+            Controls.Add(splash);
+            splash.BringToFront();
+            splash.SetStep(4, "Запускаю Luxe Launcher…");
+            splash.Refresh();
+        }
+        catch { splash = null; }
+        Resize += SplashKeep;
+        try { BeginInvoke(new Action(delegate { StartupStep(1); })); }
+        catch { StartupStep(1); }
+    }
+
+    void SplashKeep(object s, EventArgs e)
+    {
+        try
+        {
+            if (splash != null && !startupDone)
+                splash.Bounds = new Rectangle(0, 0, ClientSize.Width, ClientSize.Height);
+        }
+        catch { }
+    }
+
+    void SetSplash(int pct, string text)
+    {
+        try { if (splash != null) splash.SetStep(pct, text); } catch { }
+    }
+
+    // Шаги инициализации идут через очередь сообщений: между ними окно
+    // успевает перерисовать экран загрузки, поэтому маскот ходит, а
+    // полоса ползёт, а не замирает.
+    void StartupStep(int step)
+    {
+        if (IsDisposed) return;
+        if (DbgSplashHold && step >= 2) { SetSplash(62, "Загружаю версии…"); return; }
+        try
+        {
+            switch (step)
+            {
+                case 1:
+                    SetSplash(16, "Собираю интерфейс…");
+                    try { ApplyView(); } catch { }
+                    try { if (splash != null) splash.BringToFront(); } catch { }
+                    BeginInvoke(new Action(delegate { StartupStep(2); }));
+                    break;
+
+                case 2:
+                    SetSplash(36, "Ищу Java…");
+                    try
+                    {
+                        string j0 = Mc.FindLocalJava();
+                        if (j0 != null)
+                        {
+                            javaExe = j0;
+                            SetStatus("Java найдена. Готов к запуску.", true);
+                        }
+                        else SetStatus("Java скачается сама при первом запуске.", true);
+                    }
+                    catch { }
+                    BeginInvoke(new Action(delegate { StartupStep(3); }));
+                    break;
+
+                case 3:
+                    SetSplash(58, "Загружаю версии…");
+                    LoadVersionsAsync(delegate
+                    {
+                        try { BeginInvoke(new Action(delegate { StartupStep(4); })); }
+                        catch { }
+                    });
+                    break;
+
+                case 4:
+                    SetSplash(86, "Подключаю сервис…");
+                    try { SocialStart(); } catch { }
+                    BeginInvoke(new Action(delegate { StartupStep(5); }));
+                    break;
+
+                case 5:
+                    SetSplash(96, "Проверяю обновления…");
+                    try
+                    {
+                        Thread u = new Thread((ThreadStart)delegate { CheckUpdates(false); });
+                        u.IsBackground = true;
+                        u.Start();
+                    }
+                    catch { }
+                    BeginInvoke(new Action(delegate { StartupStep(6); }));
+                    break;
+
+                case 6:
+                    SetSplash(100, "Готово");
+                    if (!DbgSplashHold) FinishSplash();
+                    break;
+            }
+        }
+        catch { FinishSplash(); }
+    }
+
+    void FinishSplash()
+    {
+        if (startupDone) return;
+        startupDone = true;
+        try { Resize -= SplashKeep; } catch { }
+        try { if (splash != null) splash.Finish(); } catch { }
     }
 
     // Содержимое разделов строим после показа формы — до этого WinForms
@@ -6710,7 +7093,7 @@ partial class LauncherForm : Form
             int heroY = TopH + 14;
             // высота витрины берётся из общей метрики: на низком окне
             // баннер поджимается, чтобы влезли вкладки и список версий
-            HomeMetrics heroM = Metrics(H);
+            HomeMetrics heroM = Metrics(H - BotH);
             int heroH = heroM.HeroH;
             int heroLw = (int)(PW * 0.56f);
             if (heroLw < 260) heroLw = 260;
@@ -6739,7 +7122,7 @@ partial class LauncherForm : Form
                 }
                 else
                 {
-                    lblHeroHi.Text = "Погрузись\nв бесконечный\nмир приключений";
+                    lblHeroHi.Text = "Погрузись\nв бесконечный\nмир Minecraft!";
                     lblHeroHi.Font = Ui.Font(17, FontStyle.Bold);
                     lblHeroHi.LineH = 24;
                     lblHeroHi.Size = new Size(heroLw, 84);
@@ -6781,12 +7164,12 @@ partial class LauncherForm : Form
 
             // ===== правая колонка =====
             int rightX = W - Marg - RightW;
-            int rightH = H - heroY - Marg;
+            int rightH = H - heroY - Marg - BotH;
             if (rightH < 300) rightH = 300;
             rightCol.Location = new Point(rightX, heroY);
             rightCol.Size = new Size(RightW, rightH);
 
-            HomeMetrics hm = Metrics(H);
+            HomeMetrics hm = Metrics(H - BotH);
             int premH = hm.PremH;
             int newsH = hm.NewsH;
             int quickH = hm.QuickH;
@@ -6835,12 +7218,12 @@ partial class LauncherForm : Form
 
             int vbY = listHeadY + 30;
             int popH = 110;
-            int vbH = H - vbY - Marg - popH;
+            int vbH = H - BotH - 8 - vbY - popH;
             if (vbH < 180) vbH = 180;
             verListBox.Location = new Point(PX, vbY);
             verListBox.Size = new Size(PW, vbH);
             verList.Size = new Size(PW, vbH);
-            popularBlock.Location = new Point(PX, H - Marg - popH + 6);
+            popularBlock.Location = new Point(PX, H - BotH - 8 - popH + 6);
             popularBlock.Size = new Size(PW, popH - 6);
 
             if (!rebuild) return;
@@ -6886,7 +7269,7 @@ partial class LauncherForm : Form
             // вырожденный размер (схлопнувшееся окно) раскладку ломает
             if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
             int w = ClientSize.Width - SecX - 22;
-            int h = ClientSize.Height - SecY - 22;
+            int h = ClientSize.Height - SecY - 22 - BotH;
             if (w < 300) w = 300;
             if (h < 160) h = 160;
             if (newsUi != null && newsUi.Count >= 3)
@@ -6980,6 +7363,8 @@ partial class LauncherForm : Form
             // фоновая подложка главного экрана — на скриншотах её не было
             if (homeAllVerLink != null) homeAllVerLink.BringToFront();
             if (homeListHead != null) homeListHead.BringToFront();
+            // иконка-куб у заголовка тоже поднимается над подложкой главного экрана
+            if (homeClockIco != null) homeClockIco.BringToFront();
             if (rightCol != null) rightCol.BringToFront();
             if (popularBlock != null) popularBlock.BringToFront();
             dot.BringToFront();
@@ -7013,9 +7398,13 @@ partial class LauncherForm : Form
             if (view == ViewSkin && skinUi != null && skinUi.Count > 1) { for (int i = 1; i < skinUi.Count; i++) skinUi[i].BringToFront(); }
             if (view == ViewFriends && friendsUi != null) { for (int i = 1; i < friendsUi.Count; i++) friendsUi[i].BringToFront(); }
             if (view == ViewCapes && capesUi != null) { for (int i = 1; i < capesUi.Count; i++) capesUi[i].BringToFront(); }
+            // нижняя статус-панель всегда поверх разделов (но под оверлеями)
+            try { if (botBar != null) botBar.BringToFront(); } catch { }
             ChromeTop();
             // плашка загрузки — поверх всех слоёв, включая карточки-оверлеи
             try { if (mascotToast != null && mascotToast.Visible) mascotToast.BringToFront(); } catch { }
+            // стартовый экран загрузки — выше всего, пока идёт загрузка
+            try { if (splash != null && !startupDone) splash.BringToFront(); } catch { }
             Dbg("AV view=" + view + " kids=" + Controls.Count + " news=" + newsUi.Count + " mods=" + modsUi.Count);
         }
         catch (Exception ex)
@@ -7078,6 +7467,43 @@ partial class LauncherForm : Form
         }
         catch { }
     }
+
+    // Индикатор обновления в нижней панели: «Доступно обновление» с полосой,
+    // когда апдейт реально есть, иначе спокойное «Лаунчер обновлён».
+    void BottomUpdState()
+    {
+        if (botUpdLbl == null || botUpdLbl.IsDisposed) return;
+        if (InvokeRequired) { try { BeginInvoke(new Action(BottomUpdState)); } catch { } return; }
+        bool has = DbgUpdateAvail || !string.IsNullOrEmpty(updVer);
+        string t = has ? "Доступно обновление" : "Лаунчер обновлён";
+        botUpdLbl.Text = t;
+        // «Доступно обновление» в референсе — лавандово-белый текст и
+        // яркая фиолетовая стрелка; спокойное «Лаунчер обновлён» остаётся серым.
+        botUpdLbl.ForeColor = has ? Ui.Lerp(Ui.Txt, Ui.PrimeT, 0.22f) : Ui.GrayDim;
+        if (botUpdIco != null)
+            botUpdIco.Col = has ? Ui.Lerp(Ui.PrimeT, Color.White, 0.60f) : Ui.Green;
+        if (botUpdTrack != null) botUpdTrack.Visible = has;
+        if (botUpdFill != null) botUpdFill.Visible = has;
+
+        // Иконку прижимаем вплотную к тексту, а всю группу — к правому краю
+        // (слева от полосы прогресса). Иначе между стрелкой и надписью
+        // оставался широкий пустой зазор.
+        int bw = botBar != null ? botBar.Width : ClientSize.Width;
+        const int progW = 96;
+        const int marg = 20;
+        int textEnd = has ? (bw - marg - progW - 14) : (bw - marg);
+        Size ts = TextRenderer.MeasureText(t, botUpdLbl.Font, Size.Empty, TextFormatFlags.NoPadding);
+        int tw = ts.Width;
+        botUpdLbl.TextAlign = ContentAlignment.MiddleRight;
+        botUpdLbl.Size = new Size(tw, 20);
+        botUpdLbl.Location = new Point(textEnd - tw, BotH / 2 - 10);
+        if (botUpdIco != null)
+            botUpdIco.Location = new Point(textEnd - tw - 22, BotH / 2 - 8);
+    }
+
+    // Отладочный снимок вида «Доступно обновление» в нижней панели
+    // (боевой код не трогает; включается только из --shot-run аргументом updavail).
+    public static bool DbgUpdateAvail = false;
 
     void ShowAuth()
     {
@@ -7228,6 +7654,8 @@ partial class LauncherForm : Form
                     UpdState("У вас уже установлена последняя версия — " + Cfg.AppVersion +
                              ". Обновлять нечего.", Ui.Green);
                 }
+                updVer = "";
+                BottomUpdState();
                 return;
             }
             object uo;
@@ -7278,6 +7706,7 @@ partial class LauncherForm : Form
         updVer = ver;
         updUrl = url;
         updSize = size;
+        BottomUpdState();
         updateTitle.Text = "Доступно обновление " + ver;
         updateNotes.Text = string.IsNullOrEmpty(notes) ? ("Текущая версия: " + Cfg.AppVersion) : notes;
         btnUpdateLater.Visible = !mand;
@@ -7899,75 +8328,67 @@ partial class LauncherForm : Form
         }
     }
 
-    // «Премиум — больше возможностей» с короной на фоне
+    // «Luxe Premium» — корона слева, широкий кноп на всю ширину (как в референсе)
     void BuildPremium()
     {
         if (premiumCard == null) return;
         premiumCard.Controls.Clear();
         int w = premiumCard.Width > 0 ? premiumCard.Width : 292;
         int h = premiumCard.Height > 0 ? premiumCard.Height : 116;
-        // на низком окне карточка сжата до 88: описание и кнопку
-        // оставляем, но поднимаем их вплотную
+        // на низком окне карточка сжата до 88 — корону и текст поджимаем
         bool compact = h < 104;
 
-        IconView pi = new IconView();
-        pi.Icon = Ico.Star;
-        pi.Col = Color.FromArgb(255, 214, 140);
-        pi.Location = new Point(16, 14);
-        pi.Size = new Size(17, 17);
-        premiumCard.Controls.Add(pi);
+        int crSize = compact ? 34 : 44;
+        int crX = compact ? 12 : 14;
+        int crY = compact ? 10 : 14;
+        int tx = crX + crSize + 12;
 
         PixelLabel h2 = new PixelLabel();
-        h2.Text = "Премиум — больше возможностей";
-        h2.Font = Ui.Font(9.5f, FontStyle.Bold);
+        h2.Text = "Luxe Premium";
+        h2.Font = Ui.Font(compact ? 10.5f : 11.5f, FontStyle.Bold);
         h2.ForeColor = Ui.Txt;
         h2.BackColor = Color.Transparent;
         h2.AutoSize = false;
-        h2.Location = new Point(40, 8);
-        h2.Size = new Size(w - 96, 34);
+        h2.Location = new Point(tx, compact ? 12 : 20);
+        h2.Size = new Size(w - tx - 12, 20);
         premiumCard.Controls.Add(h2);
 
         Label d = new Label();
-        d.Text = compact ? "Скины, плащи и приоритет" : "Скины, плащи, приоритет\r\nи многое другое!";
-        d.Font = Ui.Font(8);
+        d.Text = "Открой больше возможностей!";
+        d.Font = Ui.Font(7.5f);
         d.ForeColor = Color.FromArgb(206, 200, 240);
         d.BackColor = Color.Transparent;
         d.AutoSize = false;
-        d.Location = new Point(16, compact ? 38 : 44);
-        d.Size = new Size(w - 32, compact ? 18 : 30);
+        d.Location = new Point(tx, compact ? 31 : 45);
+        d.Size = new Size(w - tx - 10, 16);
         premiumCard.Controls.Add(d);
 
-        RoundedButton more = RoundedButton.Dark("Узнать больше", 8);
-        more.Font = Ui.Font(8, FontStyle.Bold);
-        more.Size = new Size(148, 26);
-        more.Location = new Point(16, compact ? h - 34 : 78);
+        RoundedButton more = RoundedButton.Dark("Узнать больше  →", 8);
+        more.Font = Ui.Font(8.5f, FontStyle.Bold);
+        more.Size = new Size(w - 28, compact ? 26 : 30);
+        more.Location = new Point(14, h - (compact ? 36 : 42));
         more.Click += delegate { SetStatus("Премиум появится позже — следи за новостями", true); };
         premiumCard.Controls.Add(more);
 
-        // Корона и искры — прямо в декор карточки: отдельная панель внутри
-        // скруглённой карточки рисовалась обрезанной. В референсе корона
-        // фиолетовая со свечением и вокруг летают искры.
+        // Корона слева с золотым свечением — как в референсе.
         premiumCard.Deco = delegate(Graphics g, Rectangle rr)
         {
-            Rectangle cr = new Rectangle(rr.Right - 74, rr.Y + 26, 54, 50);
-            // свечение под короной
+            Rectangle cr = new Rectangle(crX, crY, crSize, crSize);
             try
             {
                 using (GraphicsPath gp = new GraphicsPath())
                 {
-                    gp.AddEllipse(cr.X - 14, cr.Y - 10, cr.Width + 28, cr.Height + 24);
+                    gp.AddEllipse(cr.X - 10, cr.Y - 8, cr.Width + 20, cr.Height + 18);
                     using (PathGradientBrush pg = new PathGradientBrush(gp))
                     {
-                        pg.CenterColor = Color.FromArgb(70, 124, 92, 255);
-                        pg.SurroundColors = new Color[] { Color.FromArgb(0, 124, 92, 255) };
+                        pg.CenterColor = Color.FromArgb(85, 255, 200, 120);
+                        pg.SurroundColors = new Color[] { Color.FromArgb(0, 255, 200, 120) };
                         g.FillPath(pg, gp);
                     }
                 }
             }
             catch { }
-            Art.Crown(g, cr, Color.FromArgb(214, 152, 128, 255));
-            // маленькая искра у короны
-            Icons.Draw(g, Ico.Sparkle, new Rectangle(rr.Right - 88, rr.Y + 64, 7, 7), Color.FromArgb(120, 190, 170, 255));
+            Art.Crown(g, cr, Color.FromArgb(255, 212, 120));
         };
     }
 
@@ -8075,14 +8496,6 @@ partial class LauncherForm : Form
                 sb.Size = new Size(w - 92, 15);
                 row.Controls.Add(sb);
             }
-
-            IconView ch = new IconView();
-            ch.Icon = Ico.ChevRight;
-            ch.Col = Ui.GrayDim;
-            ch.Location = new Point(w - 42, (rowH - 13) / 2);
-            ch.Size = new Size(13, 13);
-            ch.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            row.Controls.Add(ch);
 
             int which = i;
             row.Click += delegate { QuickLaunch(which); };
@@ -8308,8 +8721,9 @@ partial class LauncherForm : Form
         bool premium = Auth.LoggedIn;
         if (LuxeAccounts.LoggedIn)
         {
-            lblProfileSub.Text = "Аккаунт лаунчера";
-            lblProfileSub.ForeColor = Ui.Accent1;
+            // как в референсе: зелёный «Онлайн» под ником
+            lblProfileSub.Text = "Онлайн";
+            lblProfileSub.ForeColor = Ui.Green;
         }
         else if (premium)
         {
@@ -8543,10 +8957,10 @@ partial class LauncherForm : Form
             if (i == homeTab)
             {
                 // активный чип: залитая акцентом «пилюля» как в референсе
-                b.Top = Ui.Accent1;
-                b.Bottom = Ui.Accent2;
-                b.HoverTop = ControlPaint.Light(Ui.Accent1, 0.12f);
-                b.HoverBottom = ControlPaint.Light(Ui.Accent2, 0.08f);
+                b.Top = Ui.PrimeT;
+                b.Bottom = Ui.PrimeB;
+                b.HoverTop = ControlPaint.Light(Ui.PrimeT, 0.12f);
+                b.HoverBottom = ControlPaint.Light(Ui.PrimeB, 0.08f);
                 b.ForeColor = Color.White;
                 b.BorderColor = Ui.AccentDark;
                 b.BorderW = 0;
@@ -8648,23 +9062,7 @@ partial class LauncherForm : Form
         List<GridItem> items = new List<GridItem>();
         try
         {
-            List<string> installed = Mc.GetInstalledVersions();
-            if (loaderTab == 0)
-                LoadVanillaTab(items, installed);
-            else if (loaderTab == 1)
-                LoadLoaderTab(items, installed, "fabric");
-            else if (loaderTab == 2)
-                LoadLoaderTab(items, installed, "forge");
-            else if (loaderTab == 3)
-                LoadLoaderTab(items, installed, "quilt");
-            else if (loaderTab == 4)
-                LoadOptiFineTab(items, installed);
-            else if (loaderTab == 5)
-                LoadModpacksTab(items, installed, false);
-            else if (loaderTab == 6)
-                LoadModpacksTab(items, installed, true);
-            else
-                LoadLoaderTab(items, installed, "neoforge");
+            items = BuildVersionItems();
             if (gen != verLoadGen) return;   // вкладку переключили, пока грузили
             FillGrid(items);
             if (!lblStatus.Text.StartsWith("Нет интернета")) SetStatus("Готов к запуску", true);
@@ -8681,6 +9079,72 @@ partial class LauncherForm : Form
             }
             catch (Exception ex2) { SetStatus("Ошибка: " + ex2.Message, false); }
         }
+    }
+
+    // Список версий по текущей вкладке. Не трогает UI: сеть и файлы
+    // можно звать из фонового потока, поэтому стартовый экран не
+    // замирает, пока тянется манифест Minecraft.
+    List<GridItem> BuildVersionItems()
+    {
+        List<GridItem> items = new List<GridItem>();
+        List<string> installed = Mc.GetInstalledVersions();
+        if (loaderTab == 0)
+            LoadVanillaTab(items, installed);
+        else if (loaderTab == 1)
+            LoadLoaderTab(items, installed, "fabric");
+        else if (loaderTab == 2)
+            LoadLoaderTab(items, installed, "forge");
+        else if (loaderTab == 3)
+            LoadLoaderTab(items, installed, "quilt");
+        else if (loaderTab == 4)
+            LoadOptiFineTab(items, installed);
+        else if (loaderTab == 5)
+            LoadModpacksTab(items, installed, false);
+        else if (loaderTab == 6)
+            LoadModpacksTab(items, installed, true);
+        else
+            LoadLoaderTab(items, installed, "neoforge");
+        return items;
+    }
+
+    // Асинхронная загрузка списка версий для стартового экрана: тяжёлое
+    // (манифест + локальные файлы) уходит в фон, а сетка версий и статус
+    // обновляются уже в UI-потоке. done вызывается всегда.
+    void LoadVersionsAsync(Action done)
+    {
+        int gen = ++verLoadGen;
+        Thread t = new Thread((ThreadStart)delegate
+        {
+            List<GridItem> items = null;
+            try { items = BuildVersionItems(); }
+            catch { }
+            if (IsDisposed) return;
+            Ui_(delegate
+            {
+                try
+                {
+                    if (gen == verLoadGen)
+                    {
+                        if (items != null)
+                        {
+                            FillGrid(items);
+                            if (!lblStatus.Text.StartsWith("Нет интернета")) SetStatus("Готов к запуску", true);
+                        }
+                        else
+                        {
+                            List<GridItem> f = new List<GridItem>();
+                            foreach (string iv in Mc.GetInstalledVersions()) f.Add(new GridItem(iv, true));
+                            FillGrid(f);
+                            SetStatus("Нет интернета, показываю установленные", false);
+                        }
+                    }
+                }
+                catch { }
+                if (done != null) done();
+            });
+        });
+        t.IsBackground = true;
+        t.Start();
     }
 
     Dictionary<string, object> GetManifest()
@@ -9523,7 +9987,7 @@ partial class LauncherForm : Form
         int artH = (int)(cardW * 0.62f);
         if (artH < 92) artH = 92;
         if (artH > 132) artH = 132;
-        int cardH = artH + 124;
+        int cardH = artH + 100;
 
         RoundedPanel p = new RoundedPanel();
         p.Radius = 14;
@@ -9544,7 +10008,16 @@ partial class LauncherForm : Form
         // обложка-пейзаж (или PNG из covers), бейдж загрузчика лежит поверх неё
         CardHeader art = new CardHeader();
         art.Hue = hue;
+        // Обложка — только пейзаж и бейдж загрузчика. Номер версии, как
+        // в референсе, стоит отдельной строкой на панели под картинкой.
+        bool packCard = Mc.IsModpack(v) && !string.IsNullOrEmpty(customName);
+        string verTxt = packCard ? Ui.Short(customName, 20) : ShortVer(v);
         art.Big = "";
+        // версия больше не рисуется на обложке, но её хеш задаёт seed —
+        // чтобы соседние карточки получали разные кадры арта
+        int cs = 17;
+        foreach (char c0 in v) cs = cs * 31 + c0;
+        art.CoverSeed = cs;
         art.Tag = loaderName;
         art.Img = Covers.For(v, mcv);
         art.Radius = 14;
@@ -9552,20 +10025,6 @@ partial class LauncherForm : Form
         art.Size = new Size(cardW, artH);
         art.Cursor = Cursors.Hand;
         p.Controls.Add(art);
-
-        PixelLabel ti = new PixelLabel();
-        // У сборки в заголовке — её имя, а не технический id:
-        // «better-mc-fabric-bmc2-fabric» игроку ничего не говорит.
-        bool packCard = Mc.IsModpack(v) && !string.IsNullOrEmpty(customName);
-        ti.Text = packCard ? Ui.Short(customName, 20) : ShortVer(v);
-        ti.Font = Ui.Font(packCard ? 10.5f : 14, FontStyle.Bold);
-        ti.ForeColor = Ui.Txt;
-        ti.BackColor = Color.Transparent;
-        ti.AutoSize = false;
-        ti.Location = new Point(11, artH + 6);
-        ti.Size = new Size(cardW - 20, 24);
-        ti.Cursor = Cursors.Hand;
-        p.Controls.Add(ti);
 
         // подпись: что это за сборка. В референсе у карточек разные
         // подписи («Последняя версия», «Стабильная версия», «Рекомендуемая»),
@@ -9600,35 +10059,47 @@ partial class LauncherForm : Form
             }
             else sub = loaderName + " • с модами";
         }
+        // Номер версии — крупно, на панели под обложкой (как в референсе).
+        Label verL = new Label();
+        verL.Text = verTxt;
+        verL.Font = Ui.Font(13.5f, FontStyle.Bold);
+        verL.ForeColor = Ui.Txt;
+        verL.BackColor = Color.Transparent;
+        verL.AutoSize = false;
+        verL.AutoEllipsis = true;
+        verL.Location = new Point(11, artH + 5);
+        verL.Size = new Size(cardW - 20, 24);
+        verL.Cursor = Cursors.Hand;
+        p.Controls.Add(verL);
+
+        // Статус одной строкой: иконка + подпись (в референсе — «галочка» у
+        // установленной). Само действие читается по кнопке «Играть»/«Скачать».
+        IconView stIco = new IconView();
+        stIco.Icon = inst ? Ico.Check : Ico.Download;
+        stIco.Col = inst ? Ui.Green : Ui.GrayDim;
+        stIco.Size = new Size(13, 13);
+        stIco.Location = new Point(11, artH + 33);
+        stIco.Cursor = Cursors.Hand;
+        p.Controls.Add(stIco);
+
         Label subL = new Label();
         subL.Text = sub;
-        subL.Font = Ui.Font(7.5f);
-        subL.ForeColor = subCol;
+        subL.Font = Ui.Font(8f);
+        subL.ForeColor = Ui.Gray;
         subL.BackColor = Color.Transparent;
         subL.AutoSize = false;
         subL.AutoEllipsis = true;
-        subL.Location = new Point(11, artH + 30);
-        subL.Size = new Size(cardW - 20, 15);
+        subL.Location = new Point(29, artH + 32);
+        subL.Size = new Size(cardW - 38, 16);
         subL.Cursor = Cursors.Hand;
         p.Controls.Add(subL);
-
-        // статус: зелёная точка у установленной
-        Label badge = new Label();
-        badge.Text = inst ? "●  Установлена" : "○  Не скачана";
-        badge.Font = Ui.Font(7, FontStyle.Bold);
-        badge.ForeColor = inst ? Ui.Green : Ui.GrayDim;
-        badge.BackColor = Color.Transparent;
-        badge.AutoSize = false;
-        badge.Location = new Point(11, artH + 46);
-        badge.Size = new Size(cardW - 20, 14);
-        p.Controls.Add(badge);
 
         string vv = v;
         EventHandler pick = delegate { SelectVersion(vv); };
         art.Click += pick;
-        ti.Click += pick;
+        verL.Click += pick;
         subL.Click += pick;
-        badge.Click += pick;
+        stIco.Click += pick;
 
         int btnY = cardH - 44;
         int moreW = 32;
@@ -10480,6 +10951,8 @@ static class Program
                     }
                     else if (a == "skinoff") LauncherForm.DbgSkinOffline = true;
                     else if (a == "updcheck") LauncherForm.DbgUpdCheck = true;
+                    else if (a == "updavail") LauncherForm.DbgUpdateAvail = true;
+                    else if (a == "splash") LauncherForm.DbgSplashHold = true;
                     else if (a == "skinget") LauncherForm.DbgSkinGet = true;
                     else if (a == "skinclear") LauncherForm.DbgSkinClear = true;
                     else if (a == "socdemo") LauncherForm.DbgSocialDemo = true;

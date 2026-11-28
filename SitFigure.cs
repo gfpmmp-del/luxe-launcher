@@ -220,24 +220,23 @@ static class SitFigure
         collected = true;
     }
 
-    // Поза «сидит на камне»: бёдра вперёд, голени свободно свисают,
-    // правая рука отведена назад как опора, левая лежит на колене.
-    // Голова медленно поворачивается — фигура «живая», но не дёргается.
+    // Поза «герой стоит и смотрит на мир» — как на витрине в референсе:
+    // ноги прямые, руки свободно вдоль тела, голова медленно поворачивается.
+    // Раньше фигура «сидела на камне», но плита-табурет читалась на
+    // баннере как чужой UI-элемент, поэтому посадку убрали.
     static void Pose(float t)
     {
         if (!collected) Collect();
         float br = (float)Math.Sin(t * 1.15f);
 
-        // Колено вращается в СИСТЕМНОЙ оси бедра (цепочка knee→hip):
-        // чтобы голень встала вертикально вниз, его угол компенсирует
-        // бедро (−64° → +56°, стопы чуть свисают вперёд — естественная
-        // посадка). Малый угол заваливал голени вперёд «клиньями».
-        float thighA = -64f + br * 1.2f;
-        float kneeA = 56f + (float)Math.Sin(t * 1.15f + 0.55f) * 1.6f;
+        // Ноги чуть согнуты и слегка покачиваются — стойка «живая»,
+        // но не дёргается.
+        float thighA = br * 0.9f;
+        float kneeA = 1.6f + (float)Math.Sin(t * 1.15f + 0.55f) * 1.0f;
 
-        // Руки: правая назад (опора), левая вперёд (на колено)
-        float armRA = 34f + (float)Math.Sin(t * 1.15f + 1.1f) * 2.6f;
-        float armLA = -16f + (float)Math.Sin(t * 1.15f + 0.4f) * 2.0f;
+        // Руки свободно вдоль тела: правая чуть отведена, левая почти прямая
+        float armRA = 5.5f + (float)Math.Sin(t * 1.15f + 1.1f) * 2.4f;
+        float armLA = -4.0f + (float)Math.Sin(t * 1.15f + 0.4f) * 2.0f;
 
         if (sHead != null)
         {
@@ -321,25 +320,8 @@ static class SitFigure
         float cx = r.X + r.Width * 0.5f - (minX + maxX) * 0.5f * scale;
         float cy = r.Y + r.Height * 0.5f + (minY + maxY) * 0.5f * scale;
 
-        // Камень: верх на уровне таза (y=12 в модели), а не под ступнями.
-        // Иначе фигура «стоит» на плите, а не сидит — ноги должны свисать
-        // перед передней гранью блока.
-        float pelvisY = 12f + RootY;
-        float seatTop = cy - pelvisY * scale;
-        DrawSeat(g, cx, seatTop, scale, mw);
-
-        // тень на верхней грани камня — под тазом
-        float shR = mw * scale * 0.46f;
-        using (GraphicsPath shp = new GraphicsPath())
-        {
-            shp.AddEllipse(cx - shR * 0.55f, seatTop - shR * 0.14f, shR * 1.1f, shR * 0.28f);
-            using (PathGradientBrush pb = new PathGradientBrush(shp))
-            {
-                pb.CenterColor = Color.FromArgb(160, 0, 0, 0);
-                pb.SurroundColors = new Color[] { Color.FromArgb(0, 0, 0, 0) };
-                g.FillPath(pb, shp);
-            }
-        }
+        // Фигура стоит в полный рост: каменная плита-«табурет» убрана,
+        // она читалась на баннере как посторонний UI-элемент.
 
         // ---- проход 2: видимые грани с сортировкой ----
         List<PF> list = new List<PF>(faces.Count);

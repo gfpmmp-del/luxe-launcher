@@ -278,10 +278,10 @@ partial class LauncherForm
         if (b == null) return;
         if (on)
         {
-            b.Top = Ui.Accent1;
-            b.Bottom = Ui.Accent2;
-            b.HoverTop = Ui.Lerp(Ui.Accent1, Color.White, 0.10f);
-            b.HoverBottom = Ui.Lerp(Ui.Accent2, Color.White, 0.08f);
+            b.Top = Ui.PrimeT;
+            b.Bottom = Ui.PrimeB;
+            b.HoverTop = Ui.Lerp(Ui.PrimeT, Color.White, 0.10f);
+            b.HoverBottom = Ui.Lerp(Ui.PrimeB, Color.White, 0.08f);
             b.ForeColor = Color.White;
             b.BorderColor = Color.Empty;
         }

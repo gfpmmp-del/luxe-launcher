@@ -25,7 +25,8 @@ enum Ico
     Search, Refresh, Download, Trash, Close, Min, Max, Restore, Check,
     ChevDown, ChevRight, ChevLeft, Camera, Folder, Sparkle, Star, Zap,
     Power, Info, Warning, Clock, Palette, Layers, Rocket, Grid, Eye, Plus, Stop,
-    Bell, Sun, Moon, Users, Server, Cape, Crown, More, Shirt, Fire
+    Bell, Sun, Moon, Users, Server, Cape, Crown, More, Shirt, Fire,
+    Discord, Telegram
 }
 
 static class Icons
@@ -510,6 +511,31 @@ static class Icons
                     s.CloseFigure();
                     ln.Add(s);
                 }
+                break;
+
+            // Discord: фигурная «мордочка» с двумя глазами-отверстиями.
+            // Контур — один замкнутый путь (в режиме Alternate два
+            // овала внутри автоматически становятся дырками-глазами).
+            case Ico.Discord:
+                {
+                    GraphicsPath d = new GraphicsPath();
+                    d.StartFigure();
+                    d.AddBezier(4.2f, 4.8f, 6.7f, 3.4f, 9.3f, 3.1f, 12f, 3.1f);
+                    d.AddBezier(12f, 3.1f, 14.7f, 3.1f, 17.3f, 3.4f, 19.8f, 4.8f);
+                    d.AddBezier(19.8f, 4.8f, 21.3f, 9.7f, 21.3f, 13.7f, 20.3f, 17.7f);
+                    d.AddBezier(20.3f, 17.7f, 17.9f, 19.5f, 15f, 20.2f, 12f, 20.2f);
+                    d.AddBezier(12f, 20.2f, 9f, 20.2f, 6.1f, 19.5f, 3.7f, 17.7f);
+                    d.AddBezier(3.7f, 17.7f, 2.7f, 13.7f, 2.7f, 9.7f, 4.2f, 4.8f);
+                    d.CloseFigure();
+                    d.AddEllipse(7.2f, 9.3f, 3.5f, 3.9f);
+                    d.AddEllipse(13.3f, 9.3f, 3.5f, 3.9f);
+                    fl.Add(d);
+                }
+                break;
+
+            // Telegram: бумажный самолётик (заливка)
+            case Ico.Telegram:
+                fl.Add(Fig(21.6f, 3.3f, 2.2f, 10.6f, 9.2f, 13.3f, 11.3f, 20.5f, 21.6f, 3.3f));
                 break;
         }
 
@@ -1389,31 +1415,44 @@ static class Art
     // Обложка карточки версии: пейзаж + тёмная подложка под текст
     public static void CardCover(Graphics g, Rectangle r, string ver, float hue, string tag)
     {
+        CardCover(g, r, ver, hue, tag, 0);
+    }
+
+    // seedOverride != 0: номер версии больше не рисуется на обложке (он виден
+    // отдельной строкой под ней), но обложки обязаны различаться — поэтому
+    // seed приходит снаружи.
+    public static void CardCover(Graphics g, Rectangle r, string ver, float hue, string tag, int seedOverride)
+    {
         if (r.Width <= 4 || r.Height <= 4) return;
         GraphicsState st = g.Save();
         // seed из текста версии, а не из hue: «26.3» и «26.2» дают
         // почти равные hue (295/294), из-за чего соседние обложки были
         // копиями. Хеш строки разводит композиции по-настоящему.
         int seed = 17;
-        if (!string.IsNullOrEmpty(ver)) foreach (char c in ver) seed = seed * 31 + c;
-        // Обложка версии — фото (два кадра чередуются по seed, чтобы лента
-        // версий не выглядела копиями). Векторный пейзаж — запасной вариант.
-        string cover = (seed & 1) == 0 ? "p_cover" : "p_cover2";
-        bool photo = PhotoFill(g, r, cover, 0.30f + (Math.Abs(seed) % 4) * 0.06f, 170, 0);
+        if (seedOverride != 0) seed = seedOverride;
+        else if (!string.IsNullOrEmpty(ver)) foreach (char c in ver) seed = seed * 31 + c;
+        // Обложка версии — фото. Набор кадров шире двух: иначе лента версий
+        // выглядит копиями. Порядок стабилен по seed. Вектор — запасной вариант.
+        string[] frames = { "p_cover", "p_cover2", "banner_mountains", "dusk_island",
+                            "dusk_sky", "night_startrails", "night_milkyway", "p_banner" };
+        string cover = frames[Math.Abs(seed) % frames.Length];
+        // затемнение мягче прежнего: крупного текста на обложке больше нет,
+        // а арт в референсе яркий, а не «выцветший».
+        bool photo = PhotoFill(g, r, cover, 0.32f + (Math.Abs(seed) % 4) * 0.05f, 130, 0);
         if (!photo) Landscape(g, r, hue, seed);
         g.SetClip(r);
 
         if (!string.IsNullOrEmpty(ver))
         {
-            float baseSize = Math.Max(13f, r.Height * 0.40f);
+            float baseSize = Math.Max(11f, r.Height * 0.22f);
             Font f = Ui.Font(baseSize, FontStyle.Bold);
             float avail = r.Width - 20f;
             Size m0 = TextRenderer.MeasureText(ver, f);
             if (m0.Width > avail && m0.Width > 0)
-                f = Ui.Font(Math.Max(9f, baseSize * avail / m0.Width), FontStyle.Bold);
+                f = Ui.Font(Math.Max(8f, baseSize * avail / m0.Width), FontStyle.Bold);
             Size sz = TextRenderer.MeasureText(ver, f);
             int tx = r.X + 10;
-            int ty = r.Bottom - sz.Height - 5;
+            int ty = r.Bottom - sz.Height - 6;
             TextRenderer.DrawText(g, ver, f, new Point(tx + 1, ty + 1), Color.FromArgb(120, 0, 0, 0));
             TextRenderer.DrawText(g, ver, f, new Point(tx, ty), Color.FromArgb(248, 255, 255, 255));
         }

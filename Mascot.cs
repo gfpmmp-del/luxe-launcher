@@ -771,3 +771,245 @@ static class MascotLoading
         RunUi(delegate { if (MascotToast.Current != null) MascotToast.Current.HideNow(); });
     }
 }
+
+// ---------- экран загрузки при старте лаунчера ----------
+//
+//  Полноэкранный стеклянный экран: ходящий маскот, слово «Загрузка»,
+//  текущий шаг, полоса прогресса и проценты. Живёт поверх всего окна,
+//  пока инициализация реально не закончится (интерфейс собран, Java
+//  найдена, версии загружены, сервис подключён). Затем плавно уезжает
+//  вверх и открывает готовый лаунчер.
+class StartupSplash : Control
+{
+    int value = 0;              // цель прогресса 0..100
+    float disp = 0f;            // плавно догоняющее значение для полосы
+    string statusText = "Запускаю…";
+    float phase = 0f;           // фаза шага маскота
+    float shimmer = 0f;         // блик по полосе
+    bool happy = false;
+    bool finished = false;
+    Action tick;
+    System.Windows.Forms.Timer finishTimer;
+    System.Windows.Forms.Timer slideTimer;
+    Bitmap bg;
+    int bgW, bgH;
+
+    public Action Gone;         // вызывается после того, как экран уехал
+
+    public StartupSplash()
+    {
+        SetStyle(ControlStyles.SupportsTransparentBackColor, true);
+        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint
+            | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+        BackColor = Ui.Bg;
+        tick = new Action(delegate
+        {
+            if (IsDisposed) return;
+            phase += 0.11f;
+            if (phase > 1000f) phase = 0f;
+            shimmer += 0.05f;
+            if (shimmer > 2f) shimmer -= 2f;
+            disp += (value - disp) * 0.14f;
+            if (Math.Abs(value - disp) < 0.2f) disp = value;
+            Invalidate();
+        });
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        Anim.Sub(tick);
+    }
+
+    protected override void OnVisibleChanged(EventArgs e)
+    {
+        base.OnVisibleChanged(e);
+        if (!Visible) Anim.Unsub(tick);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            Anim.Unsub(tick);
+            try { if (finishTimer != null) finishTimer.Dispose(); } catch { }
+            try { if (slideTimer != null) slideTimer.Dispose(); } catch { }
+            try { if (bg != null) bg.Dispose(); } catch { }
+        }
+        base.Dispose(disposing);
+    }
+
+    public void SetStep(int pct, string text)
+    {
+        if (pct < value) pct = value;   // прогресс только вперёд
+        if (pct < 0) pct = 0;
+        if (pct > 100) pct = 100;
+        value = pct;
+        if (text != null) statusText = text;
+        try { BringToFront(); } catch { }
+        Invalidate();
+    }
+
+    public void Finish()
+    {
+        if (finished) return;
+        finished = true;
+        value = 100;
+        statusText = "Готово";
+        happy = true;
+        Invalidate();
+        finishTimer = new System.Windows.Forms.Timer();
+        finishTimer.Interval = 520;
+        finishTimer.Tick += delegate
+        {
+            finishTimer.Stop();
+            finishTimer.Dispose();
+            SlideOut();
+        };
+        finishTimer.Start();
+    }
+
+    void SlideOut()
+    {
+        int h = Height > 0 ? Height : 940;
+        int elapsed = 0, total = 300;
+        slideTimer = new System.Windows.Forms.Timer();
+        slideTimer.Interval = 16;
+        slideTimer.Tick += delegate
+        {
+            elapsed += 16;
+            float k = (float)elapsed / total;
+            if (k > 1f) k = 1f;
+            float e = k * k;                 // ease-in
+            Top = -(int)(h * e);
+            if (k >= 1f)
+            {
+                slideTimer.Stop();
+                slideTimer.Dispose();
+                Visible = false;
+                if (Gone != null) { try { Gone(); } catch { } }
+                try { Dispose(); } catch { }
+            }
+        };
+        slideTimer.Start();
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        if (bg != null) { try { bg.Dispose(); } catch { } bg = null; }
+        Invalidate();
+    }
+
+    // Статичный фон (цвет + мягкие сияния) кэшируем: маскот и полоса
+    // перерисовываются 60 раз в секунду, а фон — только при ресайзе.
+    void BuildBg()
+    {
+        try
+        {
+            if (bg != null) { try { bg.Dispose(); } catch { } bg = null; }
+            int w = Math.Max(1, Width), h = Math.Max(1, Height);
+            bg = new Bitmap(w, h);
+            bgW = w; bgH = h;
+            using (Graphics g = Graphics.FromImage(bg))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                using (SolidBrush b = new SolidBrush(Ui.Bg)) g.FillRectangle(b, 0, 0, w, h);
+                Glow(g, w * 0.32f, h * 0.16f, w * 0.80f, Color.FromArgb(48, 99, 102, 241));
+                Glow(g, w * 0.74f, h * 0.84f, w * 0.78f, Color.FromArgb(42, 34, 211, 238));
+                Glow(g, w * 0.60f, h * 0.08f, w * 0.50f, Color.FromArgb(28, 180, 0, 255));
+            }
+        }
+        catch { bg = null; }
+    }
+
+    static void Glow(Graphics g, float cx, float cy, float r, Color col)
+    {
+        try
+        {
+            using (GraphicsPath gp = new GraphicsPath())
+            {
+                gp.AddEllipse(cx - r * 0.5f, cy - r * 0.5f, r, r);
+                using (PathGradientBrush pg = new PathGradientBrush(gp))
+                {
+                    pg.CenterColor = col;
+                    pg.SurroundColors = new Color[] { Color.FromArgb(0, col.R, col.G, col.B) };
+                    g.FillPath(pg, gp);
+                }
+            }
+        }
+        catch { }
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        Graphics g = e.Graphics;
+        if (bg == null || bgW != Width || bgH != Height) BuildBg();
+        if (bg != null) g.DrawImageUnscaled(bg, 0, 0);
+        else using (SolidBrush b = new SolidBrush(Ui.Bg)) g.FillRectangle(b, ClientRectangle);
+
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+
+        int W = Width, H = Height;
+        int cx = W / 2;
+        int cy = (int)(H * 0.5f);
+        int top = cy - 150;
+
+        // бренд
+        PaintText(g, "Luxe Launcher", Ui.Font(20, FontStyle.Bold), Ui.Txt, top, 30);
+        // маскот
+        float bob = (float)Math.Sin(phase * 2f) * 1.6f;
+        MascotArt.Draw(g, new Rectangle(cx - 56, top + 34, 112, 112), phase, bob, happy);
+        // «Загрузка»
+        PaintText(g, "Загрузка", Ui.Font(16, FontStyle.Bold), Ui.Txt, top + 152, 26);
+        // текущий шаг
+        PaintText(g, statusText, Ui.Font(9.5f), Ui.Gray, top + 182, 18);
+
+        // полоса прогресса
+        int bw = 340, bh = 7;
+        int bx = cx - bw / 2, by = top + 214;
+        DrawBar(g, bx, by, bw, bh);
+        // проценты
+        PaintText(g, ((int)Math.Round(disp)) + "%", Ui.Font(9, FontStyle.Bold), Ui.Accent1, by + 12, 18);
+
+        // версия внизу
+        PaintText(g, "Версия " + Cfg.AppVersion, Ui.Font(8), Color.FromArgb(120, Ui.GrayDim), H - 40, 16);
+    }
+
+    void PaintText(Graphics g, string text, Font f, Color col, int y, int h)
+    {
+        if (text == null || f == null) return;
+        Rectangle r = new Rectangle(0, y, Width, h);
+        TextRenderer.DrawText(g, text, f, r, col,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter
+            | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+    }
+
+    void DrawBar(Graphics g, int x, int y, int w, int h)
+    {
+        // трек
+        using (GraphicsPath p = Ui.RoundRect(new RectangleF(x, y, w, h), h / 2f))
+        using (SolidBrush b = new SolidBrush(Color.FromArgb(46, 255, 255, 255)))
+            g.FillPath(b, p);
+        // заполнение
+        int fw = (int)(w * (disp / 100f));
+        if (fw < h) fw = (disp > 0.5f ? h : 0);
+        if (fw <= 0) return;
+        RectangleF fr = new RectangleF(x, y, fw, h);
+        using (GraphicsPath p = Ui.RoundRect(fr, h / 2f))
+        using (LinearGradientBrush b = new LinearGradientBrush(
+            new RectangleF(x, y, Math.Max(2, fw), h), Ui.Accent1, Ui.Accent2, 0f))
+            g.FillPath(b, p);
+        // бегущий блик
+        using (GraphicsPath p = Ui.RoundRect(fr, h / 2f))
+        {
+            GraphicsState st = g.Save();
+            g.SetClip(p);
+            float sp = shimmer / 2f;                       // 0..1
+            int sh = (int)((fw + 60) * sp) - 30;
+            using (SolidBrush b = new SolidBrush(Color.FromArgb(70, 255, 255, 255)))
+                g.FillRectangle(b, x + sh, y, 26, h);
+            g.Restore(st);
+        }
+    }
+}

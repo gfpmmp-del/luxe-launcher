@@ -77,7 +77,7 @@ class ToggleBox : Control
         int sx = 0;
 
         RectangleF track = new RectangleF(sx, sy, sw, sh);
-        Color on = Ui.Accent1;
+        Color on = Ui.PrimeT;
         Color off = hover ? Ui.Lerp(Ui.SurfaceHi, Color.White, 0.06f) : Ui.SurfaceHi;
         Color c0 = Ui.Lerp(off, on, pos);
         using (GraphicsPath tp = Ui.RoundRect(track, sh / 2f))

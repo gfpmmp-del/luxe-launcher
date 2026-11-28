@@ -1,8 +1,8 @@
 {
-    "version":  "4.0.0",
-    "url":  "https://github.com/gfpmmp-del/luxe-launcher/releases/download/v4.0.0/Luxe.Launcher.exe",
-    "size":  2691072,
-    "notes":  "4.0.0: glass UI with aurora sidebar, Luxe launcher accounts (nick 3-16, password 4-16, PBKDF2), friends by Luxe nick, animated mascot during all downloads, PowerShell-based self-updater with Unicode path support.",
+    "version":  "4.0.1",
+    "url":  "https://github.com/gfpmmp-del/luxe-launcher/releases/download/v4.0.1/Luxe.Launcher.exe",
+    "size":  2703872,
+    "notes":  "4.0.1: карточки версий как в референсе (номер под обложкой, статус строкой с галочкой, разные яркие обложки), фиолетовый первичный акцент во всём интерфейсе, индикатор обновления в нижней панели.",
     "mandatory":  false,
     "modpacks":  [
                      {

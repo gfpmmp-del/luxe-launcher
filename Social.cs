@@ -1350,8 +1350,10 @@ partial class LauncherForm
     void CapesPaintTab(RoundedButton b, bool on)
     {
         if (b == null) return;
-        Color top = on ? Ui.Accent1 : Ui.SurfaceHi;
-        Color bot = on ? Ui.Accent2 : Ui.SurfaceHi;
+        // активная вкладка — первичный фиолетовый градиент (как выбранный
+        // пункт сайдбара и кнопки-действия), а не старая бирюза
+        Color top = on ? Ui.PrimeT : Ui.SurfaceHi;
+        Color bot = on ? Ui.PrimeB : Ui.SurfaceHi;
         b.Top = top;
         b.Bottom = bot;
         b.HoverTop = ControlPaint.Light(top, 0.12f);
